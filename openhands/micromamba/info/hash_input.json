@@ -1,0 +1,17 @@
+{
+  "channel_targets": "conda-forge main",
+  "target_platform": "linux-64",
+  "c_stdlib": "sysroot",
+  "libcurl": "8",
+  "openssl": "3",
+  "c_compiler_version": "14",
+  "CI": "azure",
+  "cxx_compiler_version": "14",
+  "cxx_compiler": "gxx",
+  "spdlog": "1.15",
+  "c_stdlib_version": "2.17",
+  "c_compiler": "gcc",
+  "fmt": "11.2",
+  "zlib": "1",
+  "__glibc": "__glibc >=2.17,<3.0.a0"
+}

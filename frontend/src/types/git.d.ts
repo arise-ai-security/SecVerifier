@@ -7,7 +7,7 @@ interface GitHubErrorReponse {
 }
 
 interface GitUser {
-  id: number;
+  id: string;
   login: string;
   avatar_url: string;
   company: string | null;
@@ -15,14 +15,22 @@ interface GitUser {
   email: string | null;
 }
 
+interface Branch {
+  name: string;
+  commit_sha: string;
+  protected: boolean;
+  last_push_date?: string;
+}
+
 interface GitRepository {
-  id: number;
+  id: string;
   full_name: string;
   git_provider: Provider;
   is_public: boolean;
   stargazers_count?: number;
   link_header?: string;
   pushed_at?: string;
+  owner_type?: "user" | "organization";
 }
 
 interface GitHubCommit {

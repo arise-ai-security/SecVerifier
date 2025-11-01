@@ -1,19 +1,32 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Provider } from "react-redux";
 import { createRoutesStub } from "react-router";
 import { setupStore } from "test-utils";
-import userEvent from "@testing-library/user-event";
 import { TaskSuggestions } from "#/components/features/home/tasks/task-suggestions";
 import { SuggestionsService } from "#/api/suggestions-service/suggestions-service.api";
 import { MOCK_TASKS } from "#/mocks/task-suggestions-handlers";
-import { AuthProvider } from "#/context/auth-context";
+import userEvent from "@testing-library/user-event";
 
-const renderTaskSuggestions = (initialProvidersAreSet = true) => {
+// Mock the translation function
+vi.mock("react-i18next", async () => {
+  const actual = await vi.importActual("react-i18next");
+  return {
+    ...(actual as object),
+    useTranslation: () => ({
+      t: (key: string) => key,
+      i18n: {
+        changeLanguage: () => new Promise(() => {}),
+      },
+    }),
+  };
+});
+
+const renderTaskSuggestions = () => {
   const RouterStub = createRoutesStub([
     {
-      Component: TaskSuggestions,
+      Component: () => <TaskSuggestions />,
       path: "/",
     },
     {
@@ -29,11 +42,9 @@ const renderTaskSuggestions = (initialProvidersAreSet = true) => {
   return render(<RouterStub />, {
     wrapper: ({ children }) => (
       <Provider store={setupStore()}>
-        <AuthProvider initialProvidersAreSet={initialProvidersAreSet}>
-          <QueryClientProvider client={new QueryClient()}>
-            {children}
-          </QueryClientProvider>
-        </AuthProvider>
+        <QueryClientProvider client={new QueryClient()}>
+          {children}
+        </QueryClientProvider>
       </Provider>
     ),
   });
@@ -57,7 +68,7 @@ describe("TaskSuggestions", () => {
   it("should render an empty message if there are no tasks", async () => {
     getSuggestedTasksSpy.mockResolvedValue([]);
     renderTaskSuggestions();
-    await screen.findByText(/No tasks available/i);
+    await screen.findByText("TASKS$NO_TASKS_AVAILABLE");
   });
 
   it("should render the task groups with the correct titles", async () => {
@@ -86,7 +97,7 @@ describe("TaskSuggestions", () => {
     getSuggestedTasksSpy.mockResolvedValue(MOCK_TASKS);
     renderTaskSuggestions();
 
-    const skeletons = screen.getAllByTestId("task-group-skeleton");
+    const skeletons = await screen.findAllByTestId("task-group-skeleton");
     expect(skeletons.length).toBeGreaterThan(0);
 
     await waitFor(() => {
@@ -98,16 +109,25 @@ describe("TaskSuggestions", () => {
     expect(screen.queryByTestId("task-group-skeleton")).not.toBeInTheDocument();
   });
 
-  it("should display a button to settings if the user needs to sign in with their git provider", async () => {
-    renderTaskSuggestions(false);
+  it("should render the tooltip button", () => {
+    renderTaskSuggestions();
+    const tooltipButton = screen.getByTestId("task-suggestions-info");
+    expect(tooltipButton).toBeInTheDocument();
+  });
 
-    expect(getSuggestedTasksSpy).not.toHaveBeenCalled();
-    const goToSettingsButton = await screen.findByTestId(
-      "navigate-to-settings-button",
+  it("should have the correct aria-label", () => {
+    renderTaskSuggestions();
+    const tooltipButton = screen.getByTestId("task-suggestions-info");
+    expect(tooltipButton).toHaveAttribute(
+      "aria-label",
+      "TASKS$TASK_SUGGESTIONS_INFO",
     );
-    expect(goToSettingsButton).toBeInTheDocument();
+  });
 
-    await userEvent.click(goToSettingsButton);
-    await screen.findByTestId("settings-screen");
+  it("should render the info icon", () => {
+    renderTaskSuggestions();
+    const tooltipButton = screen.getByTestId("task-suggestions-info");
+    const icon = tooltipButton.querySelector("svg");
+    expect(icon).toBeInTheDocument();
   });
 });

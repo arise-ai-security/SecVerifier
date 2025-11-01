@@ -143,9 +143,9 @@ index 9daeafb..b02def2 100644
     with open(dos_file, 'rb') as f:
         dos_content = f.read()
 
-    assert (
-        b'\r\n' not in unix_content
-    ), 'Unix-style line endings were changed to DOS-style'
+    assert b'\r\n' not in unix_content, (
+        'Unix-style line endings were changed to DOS-style'
+    )
     assert b'\r\n' in dos_content, 'DOS-style line endings were changed to Unix-style'
 
     # Check if content was updated correctly
@@ -308,7 +308,7 @@ def test_update_existing_pull_request(
     )
 
     # Assert: Check if the auto-generated comment was posted to the PR
-    comment_url = f'https://gitlab.com/api/v4/projects/{quote(f'{issue.owner}/{issue.repo}', safe="")}/issues/{issue.number}/notes'
+    comment_url = f'https://gitlab.com/api/v4/projects/{quote(f"{issue.owner}/{issue.repo}", safe="")}/issues/{issue.number}/notes'
     expected_comment = 'This is an issue resolution.'
     mock_requests_post.assert_called_once_with(
         comment_url,
@@ -483,7 +483,7 @@ def test_send_pull_request_with_reviewer(
         ),  # PR creation
     ]
 
-    # Mock request reviwers response
+    # Mock request reviewers response
     mock_put.side_effect = [
         MagicMock(status_code=200),  # Reviewer request
     ]
@@ -697,7 +697,7 @@ def test_reply_to_comment(mock_get, mock_post, mock_issue):
 
     # Check that the correct request was made to the API
     mock_post.assert_called_once_with(
-        f'https://gitlab.com/api/v4/projects/{quote(f'{mock_issue.owner}/{mock_issue.repo}', safe="")}/merge_requests/{mock_issue.number}/discussions/{comment_id.split('/')[-1]}/notes',
+        f'https://gitlab.com/api/v4/projects/{quote(f"{mock_issue.owner}/{mock_issue.repo}", safe="")}/merge_requests/{mock_issue.number}/discussions/{comment_id.split("/")[-1]}/notes',
         headers={
             'Authorization': f'Bearer {token}',
             'Accept': 'application/json',
@@ -768,6 +768,11 @@ def test_process_single_pr_update(
         None,
         False,
         None,
+        None,
+        None,
+        None,
+        'openhands',
+        'openhands@all-hands.dev',
     )
 
     mock_initialize_repo.assert_called_once_with(mock_output_dir, 1, 'pr', 'branch 1')
@@ -775,7 +780,11 @@ def test_process_single_pr_update(
         f'{mock_output_dir}/patches/pr_1', resolver_output.git_patch
     )
     mock_make_commit.assert_called_once_with(
-        f'{mock_output_dir}/patches/pr_1', resolver_output.issue, 'pr'
+        f'{mock_output_dir}/patches/pr_1',
+        resolver_output.issue,
+        'pr',
+        'openhands',
+        'openhands@all-hands.dev',
     )
     mock_update_existing_pull_request.assert_called_once_with(
         issue=resolver_output.issue,
@@ -845,6 +854,11 @@ def test_process_single_issue(
         None,
         False,
         None,
+        None,
+        None,
+        None,
+        'openhands',
+        'openhands@all-hands.dev',
     )
 
     # Assert that the mocked functions were called with correct arguments
@@ -853,7 +867,11 @@ def test_process_single_issue(
         f'{mock_output_dir}/patches/issue_1', resolver_output.git_patch
     )
     mock_make_commit.assert_called_once_with(
-        f'{mock_output_dir}/patches/issue_1', resolver_output.issue, 'issue'
+        f'{mock_output_dir}/patches/issue_1',
+        resolver_output.issue,
+        'issue',
+        'openhands',
+        'openhands@all-hands.dev',
     )
     mock_send_pull_request.assert_called_once_with(
         issue=resolver_output.issue,
@@ -868,6 +886,8 @@ def test_process_single_issue(
         reviewer=None,
         pr_title=None,
         base_domain='gitlab.com',
+        git_user_name='openhands',
+        git_user_email='openhands@all-hands.dev',
     )
 
 
@@ -920,6 +940,11 @@ def test_process_single_issue_unsuccessful(
         None,
         False,
         None,
+        None,
+        None,
+        None,
+        'openhands',
+        'openhands@all-hands.dev',
     )
 
     # Assert that none of the mocked functions were called
@@ -1023,6 +1048,8 @@ def test_main(
     mock_args.reviewer = None
     mock_args.pr_title = None
     mock_args.selected_repo = None
+    mock_args.git_user_name = 'openhands'
+    mock_args.git_user_email = 'openhands@all-hands.dev'
     mock_parser.return_value.parse_args.return_value = mock_args
 
     # Setup environment variables
@@ -1065,6 +1092,8 @@ def test_main(
         mock_args.reviewer,
         mock_args.pr_title,
         ANY,
+        mock_args.git_user_name,
+        mock_args.git_user_email,
     )
 
     # Other assertions

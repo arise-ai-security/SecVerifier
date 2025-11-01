@@ -640,18 +640,35 @@ async def complete_runtime(
         f'Failed to run the command: {str(action.command)}',
     )
 
-    # Extract build script from the runtime
-    action = CmdRunAction(command="""cat /src/build.sh""")
-    action.set_hard_timeout(30)
-    logger.info(action, extra={'msg_type': 'ACTION'})
-    obs = runtime.run_action(action)
-    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
-    assert_and_raise(obs.exit_code == 0, f'Failed to extract build script: {str(obs)}')
+    # Extract build script from the runtime (be tolerant to different locations)
+    candidate_build_paths = []
+    try:
+        work_dir = instance.get('work_dir', '/src')
+    except Exception:
+        work_dir = '/src'
+    candidate_build_paths.append(f"{work_dir}/build.sh")
+    candidate_build_paths.extend([
+        '/src/build.sh',
+        '/workspace/src/build.sh',
+        '/workspace/build.sh',
+        '/testcase/build.sh',
+    ])
 
-    if isinstance(obs, CmdOutputObservation):
-        build_script = obs.content.strip()
-    else:
-        assert_and_raise(False, f'Unexpected observation type: {str(obs)}')
+    for build_path in candidate_build_paths:
+        action = CmdRunAction(command=f"""cat {build_path}""")
+        action.set_hard_timeout(30)
+        logger.info(action, extra={'msg_type': 'ACTION'})
+        obs = runtime.run_action(action)
+        logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+        if isinstance(obs, CmdOutputObservation) and obs.exit_code == 0:
+            build_script = obs.content.strip()
+            logger.info(f"Extracted build script from {build_path}")
+            break
+    if build_script is None:
+        logger.warning(
+            f"Could not read build.sh from any of: {', '.join(candidate_build_paths)}. Proceeding without embedding build.sh content."
+        )
+        build_script = ''
 
     # Extract environment variables
     for env_var in ENV_VARS_TO_COLLECT:
@@ -669,24 +686,21 @@ async def complete_runtime(
         elif isinstance(obs, ErrorObservation):
             logger.error(f'Error extracting {env_var}: {obs.error}')
 
-    # Extract secb script from the runtime
-    action = CmdRunAction(command="""cat /usr/local/bin/secb""")
-    action.set_hard_timeout(30)
-    logger.info(action, extra={'msg_type': 'ACTION'})
-    obs = runtime.run_action(action)
-    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
-    assert_and_raise(obs.exit_code == 0, f'Failed to extract secb script: {str(obs)}')
-
-    if isinstance(obs, CmdOutputObservation) and obs.exit_code == 0:
-        secb_script = obs.content.strip()
-    elif isinstance(obs, CmdOutputObservation):
-        logger.warning(
-            f'Failed to extract secb script (exit code {obs.exit_code}):\n{obs.content}'
-        )
-        # Allow continuation even if secb script extraction fails
-    elif isinstance(obs, ErrorObservation):
-        logger.error(f'Error extracting secb script: {obs.error}')
-        return None
+    # Extract secb script from the runtime (tolerant)
+    secb_candidates = ['/usr/local/bin/secb', '/bin/secb', '/usr/bin/secb']
+    for secb_path in secb_candidates:
+        action = CmdRunAction(command=f"""cat {secb_path}""")
+        action.set_hard_timeout(30)
+        logger.info(action, extra={'msg_type': 'ACTION'})
+        obs = runtime.run_action(action)
+        logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+        if isinstance(obs, CmdOutputObservation) and obs.exit_code == 0:
+            secb_script = obs.content.strip()
+            logger.info(f"Extracted secb script from {secb_path}")
+            break
+    if secb_script is None:
+        logger.warning('Failed to extract secb script from known locations. Proceeding without embedding secb content.')
+        secb_script = ''
 
     # Listing artifacts from the runtime
     action = CmdRunAction(
@@ -1125,12 +1139,7 @@ async def complete_runtime(
     logger.info('END Runtime Completion Fn')
     logger.info('-' * 30)
 
-    # Return None if essential scripts weren't retrieved
-    if build_script is None or secb_script is None:  # Keep artifacts optional for now
-        logger.error(
-            'Failed to retrieve essential build or secb script content. Returning None.'
-        )
-        return None
+    # Do not hard-fail if scripts couldn't be embedded; continue with collected data
 
     return InstanceOutput(
         execution=execution_results,  # Add the execution results

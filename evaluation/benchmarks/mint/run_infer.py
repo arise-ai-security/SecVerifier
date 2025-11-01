@@ -22,9 +22,9 @@ from evaluation.utils.shared import (
 )
 from openhands.controller.state.state import State
 from openhands.core.config import (
-    AppConfig,
+    OpenHandsConfig,
+    get_evaluation_parser,
     get_llm_config_arg,
-    get_parser,
 )
 from openhands.core.logger import openhands_logger as logger
 from openhands.core.main import create_runtime, run_controller
@@ -102,14 +102,14 @@ def load_incontext_example(task_name: str, with_tool: bool = True):
 
 def get_config(
     metadata: EvalMetadata,
-) -> AppConfig:
+) -> OpenHandsConfig:
     sandbox_config = get_default_sandbox_config_for_eval()
     sandbox_config.base_container_image = 'xingyaoww/od-eval-mint:v1.0'
     sandbox_config.runtime_extra_deps = (
         f'$OH_INTERPRETER_PATH -m pip install {" ".join(MINT_DEPENDENCIES)}'
     )
 
-    config = AppConfig(
+    config = OpenHandsConfig(
         default_agent=metadata.agent_class,
         run_as_openhands=False,
         runtime='docker',
@@ -130,7 +130,7 @@ def initialize_runtime(runtime: Runtime):
 
     This function is called before the runtime is used to run the agent.
     """
-    logger.info(f"{'-' * 50} BEGIN Runtime Initialization Fn {'-' * 50}")
+    logger.info(f'{"-" * 50} BEGIN Runtime Initialization Fn {"-" * 50}')
     obs: CmdOutputObservation
 
     # Set instance id
@@ -144,7 +144,7 @@ def initialize_runtime(runtime: Runtime):
     obs = runtime.run_action(action)
     assert obs.exit_code == 0
 
-    logger.info(f"{'-' * 50} END Runtime Initialization Fn {'-' * 50}")
+    logger.info(f'{"-" * 50} END Runtime Initialization Fn {"-" * 50}')
 
 
 def process_instance(
@@ -229,7 +229,7 @@ def process_instance(
 
 
 if __name__ == '__main__':
-    parser = get_parser()
+    parser = get_evaluation_parser()
 
     SUBSETS = [
         # Eurus subset: https://arxiv.org/abs/2404.02078

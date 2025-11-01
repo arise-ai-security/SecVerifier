@@ -42,7 +42,11 @@ else:
 if DEBUG:
     LOG_LEVEL = 'DEBUG'
 
-LOG_TO_FILE = os.getenv('LOG_TO_FILE', 'False').lower() in ['true', '1', 'yes']
+LOG_TO_FILE = os.getenv('LOG_TO_FILE', str(LOG_LEVEL == 'DEBUG')).lower() in [
+    'true',
+    '1',
+    'yes',
+]
 DISABLE_COLOR_PRINTING = False
 
 LOG_ALL_EVENTS = os.getenv('LOG_ALL_EVENTS', 'False').lower() in ['true', '1', 'yes']
@@ -261,6 +265,7 @@ class SensitiveDataFilter(logging.Filter):
             'modal_api_token_secret',
             'llm_api_key',
             'sandbox_env_github_token',
+            'runloop_api_key',
             'daytona_api_key',
         ]
 
@@ -361,7 +366,6 @@ if DEBUG:
     openhands_logger.addFilter(StackInfoFilter())
 
 if current_log_level == logging.DEBUG:
-    LOG_TO_FILE = True
     openhands_logger.debug('DEBUG mode enabled.')
 
 if LOG_JSON:
@@ -385,10 +389,22 @@ if LOG_TO_FILE:
     )  # default log to project root
     openhands_logger.debug(f'Logging to file in: {LOG_DIR}')
 
-# Exclude LiteLLM from logging output
+# Exclude LiteLLM from logging output as it can leak keys
 logging.getLogger('LiteLLM').disabled = True
 logging.getLogger('LiteLLM Router').disabled = True
 logging.getLogger('LiteLLM Proxy').disabled = True
+
+# Exclude loquacious loggers
+LOQUACIOUS_LOGGERS = [
+    'engineio',
+    'engineio.server',
+    'socketio',
+    'socketio.client',
+    'socketio.server',
+]
+
+for logger_name in LOQUACIOUS_LOGGERS:
+    logging.getLogger(logger_name).setLevel('WARNING')
 
 
 class LlmFileHandler(logging.FileHandler):

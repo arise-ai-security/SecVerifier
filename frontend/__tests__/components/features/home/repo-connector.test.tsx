@@ -1,17 +1,16 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import { setupStore } from "test-utils";
 import { Provider } from "react-redux";
-import { createRoutesStub } from "react-router";
+import { createRoutesStub, Outlet } from "react-router";
 import OpenHands from "#/api/open-hands";
-import { AuthProvider } from "#/context/auth-context";
 import { GitRepository } from "#/types/git";
-import * as GitService from "#/api/git";
 import { RepoConnector } from "#/components/features/home/repo-connector";
+import { MOCK_DEFAULT_USER_SETTINGS } from "#/mocks/handlers";
 
-const renderRepoConnector = (initialProvidersAreSet = true) => {
+const renderRepoConnector = () => {
   const mockRepoSelection = vi.fn();
   const RouterStub = createRoutesStub([
     {
@@ -23,19 +22,27 @@ const renderRepoConnector = (initialProvidersAreSet = true) => {
       path: "/conversations/:conversationId",
     },
     {
-      Component: () => <div data-testid="settings-screen" />,
+      Component: () => <Outlet />,
       path: "/settings",
+      children: [
+        {
+          Component: () => <div data-testid="settings-screen" />,
+          path: "/settings",
+        },
+        {
+          Component: () => <div data-testid="git-settings-screen" />,
+          path: "/settings/integrations",
+        },
+      ],
     },
   ]);
 
   return render(<RouterStub />, {
     wrapper: ({ children }) => (
       <Provider store={setupStore()}>
-        <AuthProvider initialProvidersAreSet={initialProvidersAreSet}>
-          <QueryClientProvider client={new QueryClient()}>
-            {children}
-          </QueryClientProvider>
-        </AuthProvider>
+        <QueryClientProvider client={new QueryClient()}>
+          {children}
+        </QueryClientProvider>
       </Provider>
     ),
   });
@@ -43,18 +50,29 @@ const renderRepoConnector = (initialProvidersAreSet = true) => {
 
 const MOCK_RESPOSITORIES: GitRepository[] = [
   {
-    id: 1,
+    id: "1",
     full_name: "rbren/polaris",
     git_provider: "github",
     is_public: true,
   },
   {
-    id: 2,
+    id: "2",
     full_name: "All-Hands-AI/OpenHands",
     git_provider: "github",
     is_public: true,
   },
 ];
+
+beforeEach(() => {
+  const getSettingsSpy = vi.spyOn(OpenHands, "getSettings");
+  getSettingsSpy.mockResolvedValue({
+    ...MOCK_DEFAULT_USER_SETTINGS,
+    provider_tokens_set: {
+      github: "some-token",
+      gitlab: null,
+    },
+  });
+});
 
 describe("RepoConnector", () => {
   it("should render the repository connector section", () => {
@@ -64,7 +82,7 @@ describe("RepoConnector", () => {
 
   it("should render the available repositories in the dropdown", async () => {
     const retrieveUserGitRepositoriesSpy = vi.spyOn(
-      GitService,
+      OpenHands,
       "retrieveUserGitRepositories",
     );
     retrieveUserGitRepositoriesSpy.mockResolvedValue({
@@ -72,21 +90,37 @@ describe("RepoConnector", () => {
       nextPage: null,
     });
 
+    // Mock the search function that's used by the dropdown
+    vi.spyOn(OpenHands, "searchGitRepositories").mockResolvedValue(
+      MOCK_RESPOSITORIES,
+    );
+
     renderRepoConnector();
 
-    // Wait for the loading state to be replaced with the dropdown
-    const dropdown = await waitFor(() => screen.getByTestId("repo-dropdown"));
-    await userEvent.click(dropdown);
+    // First select the provider
+    const providerDropdown = await waitFor(() =>
+      screen.getByText("Select Provider"),
+    );
+    await userEvent.click(providerDropdown);
+    await userEvent.click(screen.getByText("Github"));
 
+    // Then interact with the repository dropdown
+    const repoDropdown = await waitFor(() =>
+      screen.getByTestId("repo-dropdown"),
+    );
+    const repoInput = within(repoDropdown).getByRole("combobox");
+    await userEvent.click(repoInput);
+
+    // Wait for the options to be loaded and displayed
     await waitFor(() => {
-      screen.getByText("rbren/polaris");
-      screen.getByText("All-Hands-AI/OpenHands");
+      expect(screen.getByText("rbren/polaris")).toBeInTheDocument();
+      expect(screen.getByText("All-Hands-AI/OpenHands")).toBeInTheDocument();
     });
   });
 
   it("should only enable the launch button if a repo is selected", async () => {
     const retrieveUserGitRepositoriesSpy = vi.spyOn(
-      GitService,
+      OpenHands,
       "retrieveUserGitRepositories",
     );
     retrieveUserGitRepositoriesSpy.mockResolvedValue({
@@ -96,27 +130,83 @@ describe("RepoConnector", () => {
 
     renderRepoConnector();
 
-    const launchButton = screen.getByTestId("repo-launch-button");
+    const launchButton = await screen.findByTestId("repo-launch-button");
     expect(launchButton).toBeDisabled();
 
-    // Wait for the loading state to be replaced with the dropdown
-    const dropdown = await waitFor(() => screen.getByTestId("repo-dropdown"));
-    await userEvent.click(dropdown);
+    // Mock the repository branches API call
+    vi.spyOn(OpenHands, "getRepositoryBranches").mockResolvedValue([
+      { name: "main", commit_sha: "123", protected: false },
+      { name: "develop", commit_sha: "456", protected: false },
+    ]);
+
+    // First select the provider
+    const providerDropdown = await waitFor(() =>
+      screen.getByText("Select Provider"),
+    );
+    await userEvent.click(providerDropdown);
+    await userEvent.click(screen.getByText("Github"));
+
+    // Then select the repository
+    const repoDropdown = await waitFor(() =>
+      screen.getByTestId("repo-dropdown"),
+    );
+    const repoInput = within(repoDropdown).getByRole("combobox");
+    await userEvent.click(repoInput);
+
+    // Wait for the options to be loaded and displayed
+    await waitFor(() => {
+      expect(screen.getByText("rbren/polaris")).toBeInTheDocument();
+    });
     await userEvent.click(screen.getByText("rbren/polaris"));
+
+    // Wait for the branch to be auto-selected
+    await waitFor(() => {
+      expect(screen.getByText("main")).toBeInTheDocument();
+    });
 
     expect(launchButton).toBeEnabled();
   });
 
-  it("should render the 'add git(hub|lab) repos' links if saas mode", async () => {
+  it("should render the 'add github repos' link if saas mode and github provider is set", async () => {
     const getConfiSpy = vi.spyOn(OpenHands, "getConfig");
     // @ts-expect-error - only return the APP_MODE
     getConfiSpy.mockResolvedValue({
       APP_MODE: "saas",
     });
 
+    const getSettingsSpy = vi.spyOn(OpenHands, "getSettings");
+    getSettingsSpy.mockResolvedValue({
+      ...MOCK_DEFAULT_USER_SETTINGS,
+      provider_tokens_set: {
+        github: "some-token",
+        gitlab: null,
+      },
+    });
+
     renderRepoConnector();
 
-    await screen.findByText("Add GitHub repos");
+    await screen.findByText("HOME$ADD_GITHUB_REPOS");
+  });
+
+  it("should not render the 'add github repos' link if github provider is not set", async () => {
+    const getConfiSpy = vi.spyOn(OpenHands, "getConfig");
+    // @ts-expect-error - only return the APP_MODE
+    getConfiSpy.mockResolvedValue({
+      APP_MODE: "saas",
+    });
+
+    const getSettingsSpy = vi.spyOn(OpenHands, "getSettings");
+    getSettingsSpy.mockResolvedValue({
+      ...MOCK_DEFAULT_USER_SETTINGS,
+      provider_tokens_set: {
+        gitlab: "some-token",
+        github: null,
+      },
+    });
+
+    renderRepoConnector();
+
+    expect(screen.queryByText("HOME$ADD_GITHUB_REPOS")).not.toBeInTheDocument();
   });
 
   it("should not render the 'add git(hub|lab) repos' links if oss mode", async () => {
@@ -135,7 +225,7 @@ describe("RepoConnector", () => {
   it("should create a conversation and redirect with the selected repo when pressing the launch button", async () => {
     const createConversationSpy = vi.spyOn(OpenHands, "createConversation");
     const retrieveUserGitRepositoriesSpy = vi.spyOn(
-      GitService,
+      OpenHands,
       "retrieveUserGitRepositories",
     );
     retrieveUserGitRepositoriesSpy.mockResolvedValue({
@@ -147,38 +237,59 @@ describe("RepoConnector", () => {
 
     const repoConnector = screen.getByTestId("repo-connector");
     const launchButton =
-      within(repoConnector).getByTestId("repo-launch-button");
+      await within(repoConnector).findByTestId("repo-launch-button");
     await userEvent.click(launchButton);
 
     // repo not selected yet
     expect(createConversationSpy).not.toHaveBeenCalled();
 
-    // select a repository from the dropdown
-    const dropdown = await waitFor(() =>
-      within(repoConnector).getByTestId("repo-dropdown")
-    );
-    await userEvent.click(dropdown);
+    // Mock the repository branches API call
+    vi.spyOn(OpenHands, "getRepositoryBranches").mockResolvedValue([
+      { name: "main", commit_sha: "123", protected: false },
+      { name: "develop", commit_sha: "456", protected: false },
+    ]);
 
-    const repoOption = screen.getByText("rbren/polaris");
-    await userEvent.click(repoOption);
+    // First select the provider
+    const providerDropdown = await waitFor(() =>
+      screen.getByText("Select Provider"),
+    );
+    await userEvent.click(providerDropdown);
+    await userEvent.click(screen.getByText("Github"));
+
+    // Then select the repository
+    const repoDropdown = await waitFor(() =>
+      within(repoConnector).getByTestId("repo-dropdown"),
+    );
+    const repoInput = within(repoDropdown).getByRole("combobox");
+    await userEvent.click(repoInput);
+
+    // Wait for the options to be loaded and displayed
+    await waitFor(() => {
+      expect(screen.getByText("rbren/polaris")).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByText("rbren/polaris"));
+
+    // Wait for the branch to be auto-selected
+    await waitFor(() => {
+      expect(screen.getByText("main")).toBeInTheDocument();
+    });
+
     await userEvent.click(launchButton);
 
     expect(createConversationSpy).toHaveBeenCalledExactlyOnceWith(
-      {
-        full_name: "rbren/polaris",
-        git_provider: "github",
-        id: 1,
-        is_public: true,
-      },
+      "rbren/polaris",
+      "github",
       undefined,
-      [],
+      undefined,
+      "main",
+      undefined,
       undefined,
     );
   });
 
   it("should change the launch button text to 'Loading...' when creating a conversation", async () => {
     const retrieveUserGitRepositoriesSpy = vi.spyOn(
-      GitService,
+      OpenHands,
       "retrieveUserGitRepositories",
     );
     retrieveUserGitRepositoriesSpy.mockResolvedValue({
@@ -186,14 +297,40 @@ describe("RepoConnector", () => {
       nextPage: null,
     });
 
+    // Mock the repository branches API call
+    vi.spyOn(OpenHands, "getRepositoryBranches").mockResolvedValue([
+      { name: "main", commit_sha: "123", protected: false },
+      { name: "develop", commit_sha: "456", protected: false },
+    ]);
+
     renderRepoConnector();
 
-    const launchButton = screen.getByTestId("repo-launch-button");
+    const launchButton = await screen.findByTestId("repo-launch-button");
 
-    // Wait for the loading state to be replaced with the dropdown
-    const dropdown = await waitFor(() => screen.getByTestId("repo-dropdown"));
-    await userEvent.click(dropdown);
+    // First select the provider
+    const providerDropdown = await waitFor(() =>
+      screen.getByText("Select Provider"),
+    );
+    await userEvent.click(providerDropdown);
+    await userEvent.click(screen.getByText("Github"));
+
+    // Then select the repository
+    const repoDropdown = await waitFor(() =>
+      screen.getByTestId("repo-dropdown"),
+    );
+    const repoInput = within(repoDropdown).getByRole("combobox");
+    await userEvent.click(repoInput);
+
+    // Wait for the options to be loaded and displayed
+    await waitFor(() => {
+      expect(screen.getByText("rbren/polaris")).toBeInTheDocument();
+    });
     await userEvent.click(screen.getByText("rbren/polaris"));
+
+    // Wait for the branch to be auto-selected
+    await waitFor(() => {
+      expect(screen.getByText("main")).toBeInTheDocument();
+    });
 
     await userEvent.click(launchButton);
     expect(launchButton).toBeDisabled();
@@ -201,14 +338,22 @@ describe("RepoConnector", () => {
   });
 
   it("should not display a button to settings if the user is signed in with their git provider", async () => {
-    renderRepoConnector(true);
-    expect(
-      screen.queryByTestId("navigate-to-settings-button"),
-    ).not.toBeInTheDocument();
+    renderRepoConnector();
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("navigate-to-settings-button"),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("should display a button to settings if the user needs to sign in with their git provider", async () => {
-    renderRepoConnector(false);
+    const getSettingsSpy = vi.spyOn(OpenHands, "getSettings");
+    getSettingsSpy.mockResolvedValue({
+      ...MOCK_DEFAULT_USER_SETTINGS,
+      provider_tokens_set: {},
+    });
+    renderRepoConnector();
 
     const goToSettingsButton = await screen.findByTestId(
       "navigate-to-settings-button",
@@ -224,6 +369,6 @@ describe("RepoConnector", () => {
     expect(goToSettingsButton).toBeInTheDocument();
 
     await userEvent.click(goToSettingsButton);
-    await screen.findByTestId("settings-screen");
+    await screen.findByTestId("git-settings-screen");
   });
 });

@@ -20,9 +20,9 @@ from evaluation.utils.shared import (
 )
 from openhands.controller.state.state import State
 from openhands.core.config import (
-    AppConfig,
+    OpenHandsConfig,
+    get_evaluation_parser,
     get_llm_config_arg,
-    get_parser,
 )
 from openhands.core.logger import openhands_logger as logger
 from openhands.core.main import create_runtime, run_controller
@@ -58,12 +58,12 @@ def format_task_dict(example, use_knowledge):
 def get_config(
     metadata: EvalMetadata,
     instance_id: str,
-) -> AppConfig:
+) -> OpenHandsConfig:
     sandbox_config = get_default_sandbox_config_for_eval()
     sandbox_config.base_container_image = (
         'docker.io/xingyaoww/openhands-eval-scienceagentbench'
     )
-    config = AppConfig(
+    config = OpenHandsConfig(
         default_agent=metadata.agent_class,
         run_as_openhands=False,
         runtime=os.environ.get('RUNTIME', 'docker'),
@@ -92,7 +92,7 @@ def initialize_runtime(
 
     This function is called before the runtime is used to run the agent.
     """
-    logger.info(f"{'-' * 50} BEGIN Runtime Initialization Fn {'-' * 50}")
+    logger.info(f'{"-" * 50} BEGIN Runtime Initialization Fn {"-" * 50}')
     obs: CmdOutputObservation
 
     # Set up workspace directories
@@ -123,7 +123,7 @@ def initialize_runtime(
     assert obs.exit_code == 0
     assert dataset_name in obs.content
 
-    logger.info(f"{'-' * 50} END Runtime Initialization Fn {'-' * 50}")
+    logger.info(f'{"-" * 50} END Runtime Initialization Fn {"-" * 50}')
 
 
 def complete_runtime(
@@ -136,7 +136,7 @@ def complete_runtime(
     If you need to do something in the sandbox to get the correctness metric after
     the agent has run, modify this function.
     """
-    logger.info(f"{'-' * 50} BEGIN Runtime Completion Fn {'-' * 50}")
+    logger.info(f'{"-" * 50} BEGIN Runtime Completion Fn {"-" * 50}')
     obs: CmdOutputObservation
 
     test_result = {}
@@ -156,7 +156,7 @@ def complete_runtime(
     else:
         test_result = {'program': 'ERROR'}
 
-    logger.info(f"{'-' * 50} END Runtime Completion Fn {'-' * 50}")
+    logger.info(f'{"-" * 50} END Runtime Completion Fn {"-" * 50}')
     return test_result
 
 
@@ -239,7 +239,7 @@ If the program uses some packages that are incompatible, please figure out alter
 
 
 if __name__ == '__main__':
-    parser = get_parser()
+    parser = get_evaluation_parser()
     parser.add_argument(
         '--use-knowledge',
         type=str,

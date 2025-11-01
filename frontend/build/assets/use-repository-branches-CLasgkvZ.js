@@ -1,0 +1,1 @@
+import{u as r}from"./useQuery-BQp87qj0.js";import{O as s}from"./open-hands-C0cV1FsE.js";const u=e=>r({queryKey:["repository",e,"branches"],queryFn:async()=>e?s.getRepositoryBranches(e):[],enabled:!!e,staleTime:1e3*60*5});export{u};

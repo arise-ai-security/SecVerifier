@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Type
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from openhands.controller.state.state import State
-    from openhands.core.config import AgentConfig
     from openhands.events.action import Action
     from openhands.events.action.message import SystemMessageAction
+    from openhands.utils.prompt import PromptManager
+from litellm import ChatCompletionToolParam
+
+from openhands.core.config import AgentConfig
 from openhands.core.exceptions import (
     AgentAlreadyRegisteredError,
     AgentNotRegisteredError,
@@ -16,9 +19,6 @@ from openhands.core.logger import openhands_logger as logger
 from openhands.events.event import EventSource
 from openhands.llm.llm import LLM
 from openhands.runtime.plugins import PluginRequirement
-
-if TYPE_CHECKING:
-    from openhands.utils.prompt import PromptManager
 
 
 class Agent(ABC):
@@ -30,20 +30,29 @@ class Agent(ABC):
     It tracks the execution status and maintains a history of interactions.
     """
 
-    _registry: dict[str, Type['Agent']] = {}
+    _registry: dict[str, type['Agent']] = {}
     sandbox_plugins: list[PluginRequirement] = []
+
+    config_model: type[AgentConfig] = AgentConfig
+    """Class field that specifies the config model to use for the agent. Subclasses may override with a derived config model if needed."""
 
     def __init__(
         self,
         llm: LLM,
-        config: 'AgentConfig',
+        config: AgentConfig,
     ):
         self.llm = llm
         self.config = config
         self._complete = False
-        self.prompt_manager: 'PromptManager' | None = None
-        self.mcp_tools: list[dict] = []
+        self._prompt_manager: 'PromptManager' | None = None
+        self.mcp_tools: dict[str, ChatCompletionToolParam] = {}
         self.tools: list = []
+
+    @property
+    def prompt_manager(self) -> 'PromptManager':
+        if self._prompt_manager is None:
+            raise ValueError(f'Prompt manager not initialized for agent {self.name}')
+        return self._prompt_manager
 
     def get_system_message(self) -> 'SystemMessageAction | None':
         """
@@ -97,22 +106,16 @@ class Agent(ABC):
         pass
 
     def reset(self) -> None:
-        """Resets the agent's execution status and clears the history. This method can be used
-        to prepare the agent for restarting the instruction or cleaning up before destruction.
-
-        """
-        # TODO clear history
+        """Resets the agent's execution status."""
+        # Only reset the completion status, not the LLM metrics
         self._complete = False
-
-        if self.llm:
-            self.llm.reset()
 
     @property
     def name(self) -> str:
         return self.__class__.__name__
 
     @classmethod
-    def register(cls, name: str, agent_cls: Type['Agent']) -> None:
+    def register(cls, name: str, agent_cls: type['Agent']) -> None:
         """Registers an agent class in the registry.
 
         Parameters:
@@ -127,7 +130,7 @@ class Agent(ABC):
         cls._registry[name] = agent_cls
 
     @classmethod
-    def get_cls(cls, name: str) -> Type['Agent']:
+    def get_cls(cls, name: str) -> type['Agent']:
         """Retrieves an agent class from the registry.
 
         Parameters:
@@ -160,4 +163,18 @@ class Agent(ABC):
         Args:
         - mcp_tools (list[dict]): The list of MCP tools.
         """
-        self.mcp_tools = mcp_tools
+        logger.info(
+            f'Setting {len(mcp_tools)} MCP tools for agent {self.name}: {[tool["function"]["name"] for tool in mcp_tools]}'
+        )
+        for tool in mcp_tools:
+            _tool = ChatCompletionToolParam(**tool)
+            if _tool['function']['name'] in self.mcp_tools:
+                logger.warning(
+                    f'Tool {_tool["function"]["name"]} already exists, skipping'
+                )
+                continue
+            self.mcp_tools[_tool['function']['name']] = _tool
+            self.tools.append(_tool)
+        logger.info(
+            f'Tools updated for agent {self.name}, total {len(self.tools)}: {[tool["function"]["name"] for tool in self.tools]}'
+        )

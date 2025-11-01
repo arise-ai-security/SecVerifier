@@ -103,6 +103,12 @@ class EventStream(EventStore):
             and callback_id in self._thread_loops[subscriber_id]
         ):
             loop = self._thread_loops[subscriber_id][callback_id]
+            current_task = asyncio.current_task(loop)
+            pending = [
+                task for task in asyncio.all_tasks(loop) if task is not current_task
+            ]
+            for task in pending:
+                task.cancel()
             try:
                 loop.stop()
                 loop.close()
@@ -180,9 +186,18 @@ class EventStream(EventStore):
 
         if event.id is not None:
             # Write the event to the store - this can take some time
-            self.file_store.write(
-                self._get_filename_for_id(event.id, self.user_id), json.dumps(data)
-            )
+            event_json = json.dumps(data)
+            filename = self._get_filename_for_id(event.id, self.user_id)
+            if len(event_json) > 1_000_000:  # Roughly 1MB in bytes, ignoring encoding
+                logger.warning(
+                    f'Saving event JSON over 1MB: {len(event_json):,} bytes, filename: {filename}',
+                    extra={
+                        'user_id': self.user_id,
+                        'session_id': self.sid,
+                        'size': len(event_json),
+                    },
+                )
+            self.file_store.write(filename, event_json)
 
             # Store the cache page last - if it is not present during reads then it will simply be bypassed.
             self._store_cache_page(current_write_page)
@@ -204,10 +219,26 @@ class EventStream(EventStore):
     def update_secrets(self, secrets: dict[str, str]) -> None:
         self.secrets.update(secrets)
 
-    def _replace_secrets(self, data: dict[str, Any]) -> dict[str, Any]:
+    def _replace_secrets(
+        self, data: dict[str, Any], is_top_level: bool = True
+    ) -> dict[str, Any]:
+        # Fields that should not have secrets replaced (only at top level - system metadata)
+        TOP_LEVEL_PROTECTED_FIELDS = {
+            'timestamp',
+            'id',
+            'source',
+            'cause',
+            'action',
+            'observation',
+            'message',
+        }
+
         for key in data:
-            if isinstance(data[key], dict):
-                data[key] = self._replace_secrets(data[key])
+            if is_top_level and key in TOP_LEVEL_PROTECTED_FIELDS:
+                # Skip secret replacement for protected system fields at top level only
+                continue
+            elif isinstance(data[key], dict):
+                data[key] = self._replace_secrets(data[key], is_top_level=False)
             elif isinstance(data[key], str):
                 for secret in self.secrets.values():
                     data[key] = data[key].replace(secret, '<secret_hidden>')

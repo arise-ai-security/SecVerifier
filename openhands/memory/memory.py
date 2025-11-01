@@ -2,9 +2,11 @@ import asyncio
 import os
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable
 
 import openhands
+from openhands.core.config.mcp_config import MCPConfig
 from openhands.core.logger import openhands_logger as logger
 from openhands.events.action.agent import RecallAction
 from openhands.events.event import Event, EventSource, RecallType
@@ -21,12 +23,19 @@ from openhands.microagent import (
     load_microagents_from_dir,
 )
 from openhands.runtime.base import Runtime
-from openhands.utils.prompt import RepositoryInfo, RuntimeInfo
+from openhands.runtime.runtime_status import RuntimeStatus
+from openhands.utils.prompt import (
+    ConversationInstructions,
+    RepositoryInfo,
+    RuntimeInfo,
+)
 
 GLOBAL_MICROAGENTS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(openhands.__file__)),
     'microagents',
 )
+
+USER_MICROAGENTS_DIR = Path.home() / '.openhands' / 'microagents'
 
 
 class Memory:
@@ -39,6 +48,8 @@ class Memory:
     event_stream: EventStream
     status_callback: Callable | None
     loop: asyncio.AbstractEventLoop | None
+    repo_microagents: dict[str, RepoMicroagent]
+    knowledge_microagents: dict[str, KnowledgeMicroagent]
 
     def __init__(
         self,
@@ -58,16 +69,30 @@ class Memory:
         )
 
         # Additional placeholders to store user workspace microagents
-        self.repo_microagents: dict[str, RepoMicroagent] = {}
-        self.knowledge_microagents: dict[str, KnowledgeMicroagent] = {}
+        self.repo_microagents = {}
+        self.knowledge_microagents = {}
 
         # Store repository / runtime info to send them to the templating later
         self.repository_info: RepositoryInfo | None = None
         self.runtime_info: RuntimeInfo | None = None
+        self.conversation_instructions: ConversationInstructions | None = None
 
         # Load global microagents (Knowledge + Repo)
         # from typically OpenHands/microagents (i.e., the PUBLIC microagents)
+        logger.info('[Memory Init] Starting to load global microagents...')
+        import time
+        start_time = time.time()
         self._load_global_microagents()
+        elapsed = time.time() - start_time
+        logger.info(f'[Memory Init] Global microagents loaded in {elapsed:.2f}s')
+
+        # Load user microagents from ~/.openhands/microagents/
+        logger.info('[Memory Init] Starting to load user microagents...')
+        start_time = time.time()
+        self._load_user_microagents()
+        elapsed = time.time() - start_time
+        logger.info(f'[Memory Init] User microagents loaded in {elapsed:.2f}s')
+        logger.info('[Memory Init] Memory initialization complete')
 
     def on_event(self, event: Event):
         """Handle an event from the event stream."""
@@ -119,7 +144,7 @@ class Memory:
         except Exception as e:
             error_str = f'Error: {str(e.__class__.__name__)}'
             logger.error(error_str)
-            self.send_error_message('STATUS$ERROR_MEMORY', error_str)
+            self.set_runtime_status(RuntimeStatus.ERROR_MEMORY, error_str)
             return
 
     def _on_workspace_context_recall(
@@ -155,6 +180,7 @@ class Memory:
             or self.runtime_info
             or repo_instructions
             or microagent_knowledge
+            or self.conversation_instructions
         ):
             obs = RecallObservation(
                 recall_type=RecallType.WORKSPACE_CONTEXT,
@@ -164,6 +190,9 @@ class Memory:
                 repo_directory=self.repository_info.repo_directory
                 if self.repository_info
                 and self.repository_info.repo_directory is not None
+                else '',
+                repo_branch=self.repository_info.branch_name
+                if self.repository_info and self.repository_info.branch_name is not None
                 else '',
                 repo_instructions=repo_instructions if repo_instructions else '',
                 runtime_hosts=self.runtime_info.available_hosts
@@ -176,6 +205,13 @@ class Memory:
                 microagent_knowledge=microagent_knowledge,
                 content='Added workspace context',
                 date=self.runtime_info.date if self.runtime_info is not None else '',
+                custom_secrets_descriptions=self.runtime_info.custom_secrets_descriptions
+                if self.runtime_info is not None
+                else {},
+                conversation_instructions=self.conversation_instructions.content
+                if self.conversation_instructions is not None
+                else '',
+                working_dir=self.runtime_info.working_dir if self.runtime_info else '',
             )
             return obs
         return None
@@ -249,24 +285,79 @@ class Memory:
         """
         Loads microagents from the global microagents_dir
         """
-        repo_agents, knowledge_agents, _ = load_microagents_from_dir(
+        logger.debug(f'Loading microagents from global dir: {GLOBAL_MICROAGENTS_DIR}')
+        repo_agents, knowledge_agents = load_microagents_from_dir(
             GLOBAL_MICROAGENTS_DIR
         )
-        for name, agent in knowledge_agents.items():
-            if isinstance(agent, KnowledgeMicroagent):
-                self.knowledge_microagents[name] = agent
-        for name, agent in repo_agents.items():
-            if isinstance(agent, RepoMicroagent):
-                self.repo_microagents[name] = agent
+        logger.debug(f'Found {len(knowledge_agents)} knowledge agents and {len(repo_agents)} repo agents')
+        for name, agent_knowledge in knowledge_agents.items():
+            self.knowledge_microagents[name] = agent_knowledge
+        for name, agent_repo in repo_agents.items():
+            self.repo_microagents[name] = agent_repo
+        logger.debug('Global microagents loaded successfully')
 
-    def set_repository_info(self, repo_name: str, repo_directory: str) -> None:
+    def _load_user_microagents(self) -> None:
+        """
+        Loads microagents from the user's home directory (~/.openhands/microagents/)
+        Creates the directory if it doesn't exist.
+        """
+        try:
+            logger.debug(f'Loading microagents from user dir: {USER_MICROAGENTS_DIR}')
+            # Create the user microagents directory if it doesn't exist
+            os.makedirs(USER_MICROAGENTS_DIR, exist_ok=True)
+
+            # Load microagents from user directory
+            repo_agents, knowledge_agents = load_microagents_from_dir(
+                USER_MICROAGENTS_DIR
+            )
+
+            logger.debug(f'Found {len(knowledge_agents)} user knowledge agents and {len(repo_agents)} user repo agents')
+            for name, agent_knowledge in knowledge_agents.items():
+                self.knowledge_microagents[name] = agent_knowledge
+            for name, agent_repo in repo_agents.items():
+                self.repo_microagents[name] = agent_repo
+            logger.debug('User microagents loaded successfully')
+        except Exception as e:
+            logger.warning(
+                f'Failed to load user microagents from {USER_MICROAGENTS_DIR}: {str(e)}'
+            )
+
+    def get_microagent_mcp_tools(self) -> list[MCPConfig]:
+        """
+        Get MCP tools from all repo microagents (always active)
+
+        Returns:
+            A list of MCP tools configurations from microagents
+        """
+        mcp_configs: list[MCPConfig] = []
+
+        # Check all repo microagents for MCP tools (always active)
+        for agent in self.repo_microagents.values():
+            if agent.metadata.mcp_tools:
+                mcp_configs.append(agent.metadata.mcp_tools)
+                logger.debug(
+                    f'Found MCP tools in repo microagent {agent.name}: {agent.metadata.mcp_tools}'
+                )
+
+        return mcp_configs
+
+    def set_repository_info(
+        self, repo_name: str, repo_directory: str, branch_name: str | None = None
+    ) -> None:
         """Store repository info so we can reference it in an observation."""
         if repo_name or repo_directory:
-            self.repository_info = RepositoryInfo(repo_name, repo_directory)
+            self.repository_info = RepositoryInfo(
+                repo_name, repo_directory, branch_name
+            )
         else:
             self.repository_info = None
 
-    def set_runtime_info(self, runtime: Runtime) -> None:
+    def set_runtime_info(
+        self,
+        runtime: Runtime,
+        custom_secrets_descriptions: dict[str, str],
+        working_dir: str,
+    ) -> None:
         """Store runtime info (web hosts, ports, etc.)."""
         # e.g. { '127.0.0.1': 8080 }
         utc_now = datetime.now(timezone.utc)
@@ -277,26 +368,45 @@ class Memory:
                 available_hosts=runtime.web_hosts,
                 additional_agent_instructions=runtime.additional_agent_instructions,
                 date=date,
+                custom_secrets_descriptions=custom_secrets_descriptions,
+                working_dir=working_dir,
             )
         else:
-            self.runtime_info = RuntimeInfo(date=date)
+            self.runtime_info = RuntimeInfo(
+                date=date,
+                custom_secrets_descriptions=custom_secrets_descriptions,
+                working_dir=working_dir,
+            )
 
-    def send_error_message(self, message_id: str, message: str):
+    def set_conversation_instructions(
+        self, conversation_instructions: str | None
+    ) -> None:
+        """
+        Set contextual information for conversation
+        This is information the agent may require
+        """
+        self.conversation_instructions = ConversationInstructions(
+            content=conversation_instructions or ''
+        )
+
+    def set_runtime_status(self, status: RuntimeStatus, message: str):
         """Sends an error message if the callback function was provided."""
         if self.status_callback:
             try:
                 if self.loop is None:
                     self.loop = asyncio.get_running_loop()
                 asyncio.run_coroutine_threadsafe(
-                    self._send_status_message('error', message_id, message), self.loop
+                    self._set_runtime_status('error', status, message), self.loop
                 )
-            except RuntimeError as e:
+            except (RuntimeError, KeyError) as e:
                 logger.error(
                     f'Error sending status message: {e.__class__.__name__}',
                     stack_info=False,
                 )
 
-    async def _send_status_message(self, msg_type: str, id: str, message: str):
+    async def _set_runtime_status(
+        self, msg_type: str, runtime_status: RuntimeStatus, message: str
+    ):
         """Sends a status message to the client."""
         if self.status_callback:
-            self.status_callback(msg_type, id, message)
+            self.status_callback(msg_type, runtime_status, message)

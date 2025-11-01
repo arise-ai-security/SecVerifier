@@ -3,15 +3,18 @@ import { PrefetchPageLinks } from "react-router";
 import { HomeHeader } from "#/components/features/home/home-header";
 import { RepoConnector } from "#/components/features/home/repo-connector";
 import { TaskSuggestions } from "#/components/features/home/tasks/task-suggestions";
-import { useAuth } from "#/context/auth-context";
+import { useUserProviders } from "#/hooks/use-user-providers";
+import { GitRepository } from "#/types/git";
 
 <PrefetchPageLinks page="/conversations/:conversationId" />;
 
 function HomeScreen() {
-  const { providersAreSet } = useAuth();
-  const [selectedRepoTitle, setSelectedRepoTitle] = React.useState<
-    string | null
-  >(null);
+  const { providers } = useUserProviders();
+  const [selectedRepo, setSelectedRepo] = React.useState<GitRepository | null>(
+    null,
+  );
+
+  const providersAreSet = providers.length > 0;
 
   return (
     <div
@@ -22,11 +25,10 @@ function HomeScreen() {
 
       <hr className="border-[#717888]" />
 
-      <main className="flex justify-between gap-4">
-        <RepoConnector
-          onRepoSelection={(title) => setSelectedRepoTitle(title)}
-        />
-        {providersAreSet && <TaskSuggestions filterFor={selectedRepoTitle} />}
+      <main className="flex flex-col lg:flex-row justify-between gap-8">
+        <RepoConnector onRepoSelection={(repo) => setSelectedRepo(repo)} />
+        <hr className="md:hidden border-[#717888]" />
+        {providersAreSet && <TaskSuggestions filterFor={selectedRepo} />}
       </main>
     </div>
   );

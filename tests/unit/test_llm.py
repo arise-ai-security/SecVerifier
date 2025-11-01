@@ -87,8 +87,8 @@ def test_metrics_merge_accumulated_token_usage():
     metrics2 = Metrics(model_name='model2')
 
     # Add token usage to each
-    metrics1.add_token_usage(10, 5, 3, 2, 'response-1')
-    metrics2.add_token_usage(8, 6, 2, 4, 'response-2')
+    metrics1.add_token_usage(10, 5, 3, 2, 1000, 'response-1')
+    metrics2.add_token_usage(8, 6, 2, 4, 1000, 'response-2')
 
     # Verify initial accumulated token usage
     metrics1_data = metrics1.get()
@@ -140,8 +140,8 @@ def test_llm_init_without_model_info(mock_get_model_info, default_config):
     mock_get_model_info.side_effect = Exception('Model info not available')
     llm = LLM(default_config)
     llm.init_model_info()
-    assert llm.config.max_input_tokens == 4096
-    assert llm.config.max_output_tokens == 4096
+    assert llm.config.max_input_tokens is None
+    assert llm.config.max_output_tokens is None
 
 
 def test_llm_init_with_custom_config():
@@ -152,6 +152,7 @@ def test_llm_init_with_custom_config():
         max_output_tokens=1500,
         temperature=0.8,
         top_p=0.9,
+        top_k=None,
     )
     llm = LLM(custom_config)
     assert llm.config.model == 'custom-model'
@@ -160,6 +161,42 @@ def test_llm_init_with_custom_config():
     assert llm.config.max_output_tokens == 1500
     assert llm.config.temperature == 0.8
     assert llm.config.top_p == 0.9
+    assert llm.config.top_k is None
+
+
+@patch('openhands.llm.llm.litellm_completion')
+def test_llm_top_k_in_completion_when_set(mock_litellm_completion):
+    # Create a config with top_k set
+    config_with_top_k = LLMConfig(top_k=50)
+    llm = LLM(config_with_top_k)
+
+    # Define a side effect function to check top_k
+    def side_effect(*args, **kwargs):
+        assert 'top_k' in kwargs
+        assert kwargs['top_k'] == 50
+        return {'choices': [{'message': {'content': 'Mocked response'}}]}
+
+    mock_litellm_completion.side_effect = side_effect
+
+    # Call completion
+    llm.completion(messages=[{'role': 'system', 'content': 'Test message'}])
+
+
+@patch('openhands.llm.llm.litellm_completion')
+def test_llm_top_k_not_in_completion_when_none(mock_litellm_completion):
+    # Create a config with top_k set to None
+    config_without_top_k = LLMConfig(top_k=None)
+    llm = LLM(config_without_top_k)
+
+    # Define a side effect function to check top_k
+    def side_effect(*args, **kwargs):
+        assert 'top_k' not in kwargs
+        return {'choices': [{'message': {'content': 'Mocked response'}}]}
+
+    mock_litellm_completion.side_effect = side_effect
+
+    # Call completion
+    llm.completion(messages=[{'role': 'system', 'content': 'Test message'}])
 
 
 def test_llm_init_with_metrics():
@@ -213,28 +250,6 @@ def test_response_latency_tracking(mock_time, mock_litellm_completion):
     assert latency_record.latency == 0.0  # Should be lifted to 0 instead of being -1!
 
 
-def test_llm_reset():
-    llm = LLM(LLMConfig(model='gpt-4o-mini', api_key='test_key'))
-    initial_metrics = copy.deepcopy(llm.metrics)
-    initial_metrics.add_cost(1.0)
-    initial_metrics.add_response_latency(0.5, 'test-id')
-    initial_metrics.add_token_usage(10, 5, 3, 2, 'test-id')
-    llm.reset()
-    assert llm.metrics.accumulated_cost != initial_metrics.accumulated_cost
-    assert llm.metrics.costs != initial_metrics.costs
-    assert llm.metrics.response_latencies != initial_metrics.response_latencies
-    assert llm.metrics.token_usages != initial_metrics.token_usages
-    assert isinstance(llm.metrics, Metrics)
-
-    # Check that accumulated token usage is reset
-    metrics_data = llm.metrics.get()
-    accumulated_usage = metrics_data['accumulated_token_usage']
-    assert accumulated_usage['prompt_tokens'] == 0
-    assert accumulated_usage['completion_tokens'] == 0
-    assert accumulated_usage['cache_read_tokens'] == 0
-    assert accumulated_usage['cache_write_tokens'] == 0
-
-
 @patch('openhands.llm.llm.litellm.get_model_info')
 def test_llm_init_with_openrouter_model(mock_get_model_info, default_config):
     default_config.model = 'openrouter:gpt-4o-mini'
@@ -247,6 +262,45 @@ def test_llm_init_with_openrouter_model(mock_get_model_info, default_config):
     assert llm.config.max_input_tokens == 7000
     assert llm.config.max_output_tokens == 1500
     mock_get_model_info.assert_called_once_with('openrouter:gpt-4o-mini')
+
+
+@patch('openhands.llm.llm.litellm_completion')
+def test_stop_parameter_handling(mock_litellm_completion, default_config):
+    """Test that stop parameter is only added for supported models."""
+    from litellm.types.utils import ModelResponse
+
+    mock_response = ModelResponse(
+        id='test-id',
+        choices=[{'message': {'content': 'Test response'}}],
+        model='test-model',
+    )
+    mock_litellm_completion.return_value = mock_response
+
+    # Test with a model that supports stop parameter
+    default_config.model = (
+        'custom-model'  # Use a model not in FUNCTION_CALLING_SUPPORTED_MODELS
+    )
+    llm = LLM(default_config)
+    llm.completion(
+        messages=[{'role': 'user', 'content': 'Hello!'}],
+        tools=[
+            {'type': 'function', 'function': {'name': 'test', 'description': 'test'}}
+        ],
+    )
+    # Verify stop parameter was included
+    assert 'stop' in mock_litellm_completion.call_args[1]
+
+    # Test with Grok-4 model that doesn't support stop parameter
+    default_config.model = 'xai/grok-4-0709'
+    llm = LLM(default_config)
+    llm.completion(
+        messages=[{'role': 'user', 'content': 'Hello!'}],
+        tools=[
+            {'type': 'function', 'function': {'name': 'test', 'description': 'test'}}
+        ],
+    )
+    # Verify stop parameter was not included
+    assert 'stop' not in mock_litellm_completion.call_args[1]
 
 
 # Tests involving completion and retries
@@ -324,7 +378,9 @@ def test_completion_rate_limit_wait_time(mock_litellm_completion, default_config
         wait_time = mock_sleep.call_args[0][0]
         assert (
             default_config.retry_min_wait <= wait_time <= default_config.retry_max_wait
-        ), f'Expected wait time between {default_config.retry_min_wait} and {default_config.retry_max_wait} seconds, but got {wait_time}'
+        ), (
+            f'Expected wait time between {default_config.retry_min_wait} and {default_config.retry_max_wait} seconds, but got {wait_time}'
+        )
 
 
 @patch('openhands.llm.llm.litellm_completion')
@@ -524,9 +580,9 @@ def test_gemini_25_pro_function_calling(mock_httpx_get, mock_get_model_info):
         config = LLMConfig(model=model_name, api_key='test_key')
         llm = LLM(config)
 
-        assert (
-            llm.is_function_calling_active() == expected_support
-        ), f'Expected function calling support to be {expected_support} for model {model_name}'
+        assert llm.is_function_calling_active() == expected_support, (
+            f'Expected function calling support to be {expected_support} for model {model_name}'
+        )
 
 
 @patch('openhands.llm.llm.litellm_completion')
@@ -677,34 +733,31 @@ def test_completion_with_litellm_mock(mock_litellm_completion, default_config):
 
 
 @patch('openhands.llm.llm.litellm_completion')
-def test_completion_with_two_positional_args(mock_litellm_completion, default_config):
-    mock_response = {
-        'choices': [{'message': {'content': 'Response to positional args.'}}]
+def test_llm_gemini_thinking_parameter(mock_litellm_completion, default_config):
+    """
+    Test that the 'thinking' parameter is correctly passed to litellm_completion
+    when a Gemini model is used with 'low' reasoning_effort.
+    """
+    # Configure for Gemini model with low reasoning effort
+    gemini_config = copy.deepcopy(default_config)
+    gemini_config.model = 'gemini-2.5-pro'
+    gemini_config.reasoning_effort = 'low'
+
+    # Mock the response from litellm
+    mock_litellm_completion.return_value = {
+        'choices': [{'message': {'content': 'Test response'}}]
     }
-    mock_litellm_completion.return_value = mock_response
 
-    test_llm = LLM(config=default_config)
-    response = test_llm.completion(
-        'some-model-to-be-ignored',
-        [{'role': 'user', 'content': 'Hello from positional args!'}],
-        stream=False,
-    )
+    # Initialize LLM and call completion
+    llm = LLM(config=gemini_config)
+    llm.completion(messages=[{'role': 'user', 'content': 'Hello!'}])
 
-    # Assertions
-    assert (
-        response['choices'][0]['message']['content'] == 'Response to positional args.'
-    )
+    # Verify that litellm_completion was called with the 'thinking' parameter
     mock_litellm_completion.assert_called_once()
-
-    # Check if the correct arguments were passed to litellm_completion
     call_args, call_kwargs = mock_litellm_completion.call_args
-    assert (
-        call_kwargs['model'] == default_config.model
-    )  # Should use the model from config, not the first arg
-    assert call_kwargs['messages'] == [
-        {'role': 'user', 'content': 'Hello from positional args!'}
-    ]
-    assert not call_kwargs['stream']
+    assert 'thinking' in call_kwargs
+    assert call_kwargs['thinking'] == {'budget_tokens': 128}
+    assert 'reasoning_effort' not in call_kwargs
 
     # Ensure the first positional argument (model) was ignored
     assert (
@@ -964,3 +1017,294 @@ def test_llm_base_url_auto_protocol_patch(mock_get):
 
     called_url = mock_get.call_args[0][0]
     assert called_url.startswith('http://') or called_url.startswith('https://')
+
+
+# Tests for max_output_tokens configuration and usage
+
+
+def test_unknown_model_token_limits():
+    """Test that models without known token limits get None for both max_output_tokens and max_input_tokens."""
+    # Create LLM instance with a non-existent model to avoid litellm having model info for it
+    config = LLMConfig(model='non-existent-model', api_key='test_key')
+    llm = LLM(config)
+
+    # Verify max_output_tokens and max_input_tokens are initialized to None (default value)
+    assert llm.config.max_output_tokens is None
+    assert llm.config.max_input_tokens is None
+
+
+def test_max_tokens_from_model_info():
+    """Test that max_output_tokens and max_input_tokens are correctly initialized from model info."""
+    # Create LLM instance with GPT-4 model which has known token limits
+    config = LLMConfig(model='gpt-4', api_key='test_key')
+    llm = LLM(config)
+
+    # GPT-4 has specific token limits
+    # These are the expected values from litellm
+    assert llm.config.max_output_tokens == 4096
+    assert llm.config.max_input_tokens == 8192
+
+
+def test_claude_3_7_sonnet_max_output_tokens():
+    """Test that Claude 3.7 Sonnet models get the special 64000 max_output_tokens value and default max_input_tokens."""
+    # Create LLM instance with Claude 3.7 Sonnet model
+    config = LLMConfig(model='claude-3-7-sonnet', api_key='test_key')
+    llm = LLM(config)
+
+    # Verify max_output_tokens is set to 64000 for Claude 3.7 Sonnet
+    assert llm.config.max_output_tokens == 64000
+    # Verify max_input_tokens is set to None (default value)
+    assert llm.config.max_input_tokens is None
+
+
+def test_claude_sonnet_4_max_output_tokens():
+    """Test that Claude Sonnet 4 models get the correct max_output_tokens and max_input_tokens values."""
+    # Create LLM instance with a Claude Sonnet 4 model
+    config = LLMConfig(model='claude-sonnet-4-20250514', api_key='test_key')
+    llm = LLM(config)
+
+    # Verify max_output_tokens is set to the expected value
+    assert llm.config.max_output_tokens == 64000
+    # Verify max_input_tokens is set to the expected value
+    # For Claude models, we expect a specific value from litellm
+    assert llm.config.max_input_tokens == 200000
+
+
+def test_sambanova_deepseek_model_max_output_tokens():
+    """Test that SambaNova DeepSeek-V3-0324 model gets the correct max_output_tokens value."""
+    # Create LLM instance with SambaNova DeepSeek model
+    config = LLMConfig(model='sambanova/DeepSeek-V3-0324', api_key='test_key')
+    llm = LLM(config)
+
+    # SambaNova DeepSeek model has specific token limits
+    # This is the expected value from litellm
+    assert llm.config.max_output_tokens == 32768
+
+
+def test_max_output_tokens_override_in_config():
+    """Test that max_output_tokens can be overridden in the config."""
+    # Create LLM instance with minimal config and overridden max_output_tokens
+    config = LLMConfig(
+        model='claude-sonnet-4-20250514', api_key='test_key', max_output_tokens=2048
+    )
+    llm = LLM(config)
+
+    # Verify the config has the overridden max_output_tokens value
+    assert llm.config.max_output_tokens == 2048
+
+
+def test_azure_model_default_max_tokens():
+    """Test that Azure models have the default max_output_tokens value."""
+    # Create minimal config for Azure model (without specifying max_output_tokens)
+    azure_config = LLMConfig(
+        model='azure/non-existent-model',  # Use a non-existent model to avoid litellm having model info for it
+        api_key='test_key',
+        base_url='https://test.openai.azure.com/',
+        api_version='2024-12-01-preview',
+    )
+
+    # Create LLM instance with Azure model
+    llm = LLM(azure_config)
+
+    # Verify the config has the default max_output_tokens value
+    assert llm.config.max_output_tokens is None  # Default value
+
+
+# Gemini Performance Optimization Tests
+
+
+def test_gemini_model_keeps_none_reasoning_effort():
+    """Test that Gemini models keep reasoning_effort=None for optimization."""
+    config = LLMConfig(model='gemini-2.5-pro', api_key='test_key')
+    # reasoning_effort should remain None for Gemini models
+    assert config.reasoning_effort is None
+
+
+def test_non_gemini_model_gets_high_reasoning_effort():
+    """Test that non-Gemini models get reasoning_effort='high' by default."""
+    config = LLMConfig(model='gpt-4o', api_key='test_key')
+    # Non-Gemini models should get reasoning_effort='high'
+    assert config.reasoning_effort == 'high'
+
+
+def test_explicit_reasoning_effort_preserved():
+    """Test that explicitly set reasoning_effort is preserved."""
+    config = LLMConfig(
+        model='gemini-2.5-pro', api_key='test_key', reasoning_effort='medium'
+    )
+    # Explicitly set reasoning_effort should be preserved
+    assert config.reasoning_effort == 'medium'
+
+
+@patch('openhands.llm.llm.litellm_completion')
+def test_gemini_none_reasoning_effort_uses_thinking_budget(mock_completion):
+    """Test that Gemini with reasoning_effort=None uses thinking budget."""
+    config = LLMConfig(
+        model='gemini-2.5-pro', api_key='test_key', reasoning_effort=None
+    )
+
+    # Mock the completion response
+    mock_completion.return_value = {
+        'choices': [{'message': {'content': 'Test response'}}],
+        'usage': {'prompt_tokens': 10, 'completion_tokens': 5},
+    }
+
+    llm = LLM(config)
+    sample_messages = [{'role': 'user', 'content': 'Hello, how are you?'}]
+    llm.completion(messages=sample_messages)
+
+    # Verify that thinking budget was set and reasoning_effort was None
+    call_kwargs = mock_completion.call_args[1]
+    assert 'thinking' in call_kwargs
+    assert call_kwargs['thinking'] == {'budget_tokens': 128}
+    assert call_kwargs.get('reasoning_effort') is None
+
+
+@patch('openhands.llm.llm.litellm_completion')
+def test_gemini_low_reasoning_effort_uses_thinking_budget(mock_completion):
+    """Test that Gemini with reasoning_effort='low' uses thinking budget."""
+    config = LLMConfig(
+        model='gemini-2.5-pro', api_key='test_key', reasoning_effort='low'
+    )
+
+    # Mock the completion response
+    mock_completion.return_value = {
+        'choices': [{'message': {'content': 'Test response'}}],
+        'usage': {'prompt_tokens': 10, 'completion_tokens': 5},
+    }
+
+    llm = LLM(config)
+    sample_messages = [{'role': 'user', 'content': 'Hello, how are you?'}]
+    llm.completion(messages=sample_messages)
+
+    # Verify that thinking budget was set and reasoning_effort was None
+    call_kwargs = mock_completion.call_args[1]
+    assert 'thinking' in call_kwargs
+    assert call_kwargs['thinking'] == {'budget_tokens': 128}
+    assert call_kwargs.get('reasoning_effort') is None
+
+
+@patch('openhands.llm.llm.litellm_completion')
+def test_gemini_medium_reasoning_effort_passes_through(mock_completion):
+    """Test that Gemini with reasoning_effort='medium' passes through to litellm."""
+    config = LLMConfig(
+        model='gemini-2.5-pro', api_key='test_key', reasoning_effort='medium'
+    )
+
+    # Mock the completion response
+    mock_completion.return_value = {
+        'choices': [{'message': {'content': 'Test response'}}],
+        'usage': {'prompt_tokens': 10, 'completion_tokens': 5},
+    }
+
+    llm = LLM(config)
+    sample_messages = [{'role': 'user', 'content': 'Hello, how are you?'}]
+    llm.completion(messages=sample_messages)
+
+    # Verify that reasoning_effort was passed through and thinking budget was not set
+    call_kwargs = mock_completion.call_args[1]
+    assert 'thinking' not in call_kwargs
+    assert call_kwargs.get('reasoning_effort') == 'medium'
+
+
+@patch('openhands.llm.llm.litellm_completion')
+def test_gemini_high_reasoning_effort_passes_through(mock_completion):
+    """Test that Gemini with reasoning_effort='high' passes through to litellm."""
+    config = LLMConfig(
+        model='gemini-2.5-pro', api_key='test_key', reasoning_effort='high'
+    )
+
+    # Mock the completion response
+    mock_completion.return_value = {
+        'choices': [{'message': {'content': 'Test response'}}],
+        'usage': {'prompt_tokens': 10, 'completion_tokens': 5},
+    }
+
+    llm = LLM(config)
+    sample_messages = [{'role': 'user', 'content': 'Hello, how are you?'}]
+    llm.completion(messages=sample_messages)
+
+    # Verify that reasoning_effort was passed through and thinking budget was not set
+    call_kwargs = mock_completion.call_args[1]
+    assert 'thinking' not in call_kwargs
+    assert call_kwargs.get('reasoning_effort') == 'high'
+
+
+@patch('openhands.llm.llm.litellm_completion')
+def test_non_gemini_uses_reasoning_effort(mock_completion):
+    """Test that non-Gemini models use reasoning_effort instead of thinking budget."""
+    config = LLMConfig(model='o1', api_key='test_key', reasoning_effort='high')
+
+    # Mock the completion response
+    mock_completion.return_value = {
+        'choices': [{'message': {'content': 'Test response'}}],
+        'usage': {'prompt_tokens': 10, 'completion_tokens': 5},
+    }
+
+    llm = LLM(config)
+    sample_messages = [{'role': 'user', 'content': 'Hello, how are you?'}]
+    llm.completion(messages=sample_messages)
+
+    # Verify that reasoning_effort was used and thinking budget was not set
+    call_kwargs = mock_completion.call_args[1]
+    assert 'thinking' not in call_kwargs
+    assert call_kwargs.get('reasoning_effort') == 'high'
+
+
+@patch('openhands.llm.llm.litellm_completion')
+def test_non_reasoning_model_no_optimization(mock_completion):
+    """Test that non-reasoning models don't get optimization parameters."""
+    config = LLMConfig(
+        model='gpt-3.5-turbo',  # Not in REASONING_EFFORT_SUPPORTED_MODELS
+        api_key='test_key',
+    )
+
+    # Mock the completion response
+    mock_completion.return_value = {
+        'choices': [{'message': {'content': 'Test response'}}],
+        'usage': {'prompt_tokens': 10, 'completion_tokens': 5},
+    }
+
+    llm = LLM(config)
+    sample_messages = [{'role': 'user', 'content': 'Hello, how are you?'}]
+    llm.completion(messages=sample_messages)
+
+    # Verify that neither thinking budget nor reasoning_effort were set
+    call_kwargs = mock_completion.call_args[1]
+    assert 'thinking' not in call_kwargs
+    assert 'reasoning_effort' not in call_kwargs
+
+
+@patch('openhands.llm.llm.litellm_completion')
+def test_gemini_performance_optimization_end_to_end(mock_completion):
+    """Test the complete Gemini performance optimization flow end-to-end."""
+    # Mock the completion response
+    mock_completion.return_value = {
+        'choices': [{'message': {'content': 'Optimized response'}}],
+        'usage': {'prompt_tokens': 50, 'completion_tokens': 25},
+    }
+
+    # Create Gemini configuration
+    config = LLMConfig(model='gemini-2.5-pro', api_key='test_key')
+
+    # Verify config has optimized defaults
+    assert config.reasoning_effort is None
+
+    # Create LLM and make completion
+    llm = LLM(config)
+    messages = [{'role': 'user', 'content': 'Solve this complex problem'}]
+
+    response = llm.completion(messages=messages)
+
+    # Verify response was generated
+    assert response['choices'][0]['message']['content'] == 'Optimized response'
+
+    # Verify optimization parameters were applied
+    call_kwargs = mock_completion.call_args[1]
+    assert 'thinking' in call_kwargs
+    assert call_kwargs['thinking'] == {'budget_tokens': 128}
+    assert call_kwargs.get('reasoning_effort') is None
+
+    # Verify temperature and top_p were removed for reasoning models
+    assert 'temperature' not in call_kwargs
+    assert 'top_p' not in call_kwargs

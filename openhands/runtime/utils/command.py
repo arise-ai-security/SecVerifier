@@ -1,25 +1,59 @@
-from openhands.core.config import AppConfig
+import os
+from typing import Optional
+from openhands.core.config import OpenHandsConfig
 from openhands.runtime.plugins import PluginRequirement
 
-DEFAULT_PYTHON_PREFIX = [
-    '/openhands/micromamba/bin/micromamba',
-    'run',
-    '-n',
-    'openhands',
-    'poetry',
-    'run',
-]
+
+def _compute_default_python_prefix() -> list[str]:
+    """Determine how to launch the runtime server inside the container.
+
+    If OPENHANDS_USE_MICROMAMBA is set to '0' or 'false' (case-insensitive),
+    we will skip micromamba and poetry prefixes and run the module directly with python.
+    Otherwise, default to using micromamba + poetry as before.
+    """
+    use_mamba = os.environ.get('OPENHANDS_USE_MICROMAMBA', '1').lower()
+    if use_mamba in ('0', 'false', 'no'):  # direct python
+        return []
+    return [
+        '/openhands/micromamba/bin/micromamba',
+        'run',
+        '-n',
+        'openhands',
+        'poetry',
+        'run',
+    ]
+
+
+DEFAULT_PYTHON_PREFIX = _compute_default_python_prefix()
+DEFAULT_MAIN_MODULE = 'openhands.runtime.action_execution_server'
 
 
 def get_action_execution_server_startup_command(
     server_port: int,
     plugins: list[PluginRequirement],
-    app_config: AppConfig,
-    python_prefix: list[str] = DEFAULT_PYTHON_PREFIX,
+    app_config: OpenHandsConfig,
+    python_prefix: Optional[list[str]] = None,
     override_user_id: int | None = None,
     override_username: str | None = None,
+    main_module: str = DEFAULT_MAIN_MODULE,
+    python_executable: str = 'python',
 ) -> list[str]:
     sandbox_config = app_config.sandbox
+
+    # Decide whether to use micromamba based on config/env if caller didn't override python_prefix
+    if python_prefix is None:
+        # Prefer explicit signal from runtime_startup_env_vars in app_config
+        flag = None
+        if sandbox_config.runtime_startup_env_vars:
+            flag = sandbox_config.runtime_startup_env_vars.get('OPENHANDS_USE_MICROMAMBA')
+        # Fall back to host env var
+        if flag is None:
+            flag = os.environ.get('OPENHANDS_USE_MICROMAMBA')
+
+        if flag is not None and str(flag).lower() in ('0', 'false', 'no'):
+            python_prefix = []  # run directly with python
+        else:
+            python_prefix = DEFAULT_PYTHON_PREFIX
 
     # Plugin args
     plugin_args = []
@@ -42,10 +76,10 @@ def get_action_execution_server_startup_command(
 
     base_cmd = [
         *python_prefix,
-        'python',
+        python_executable,
         '-u',
         '-m',
-        'openhands.runtime.action_execution_server',
+        main_module,
         str(server_port),
         '--working-dir',
         app_config.workspace_mount_path_in_sandbox,
@@ -54,7 +88,14 @@ def get_action_execution_server_startup_command(
         username,
         '--user-id',
         str(user_id),
+        '--git-user-name',
+        app_config.git_user_name,
+        '--git-user-email',
+        app_config.git_user_email,
         *browsergym_args,
     ]
+
+    if not app_config.enable_browser:
+        base_cmd.append('--no-enable-browser')
 
     return base_cmd
