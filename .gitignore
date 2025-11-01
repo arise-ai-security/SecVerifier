@@ -1,0 +1,19 @@
+# Local configuration files and secrets
+config.toml
+.env
+.env.*
+
+# macOS files
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
