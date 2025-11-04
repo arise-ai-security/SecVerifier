@@ -852,6 +852,74 @@ async def initialize_repository(runtime: Runtime, instance: pd.Series) -> bool:
     else:
         logger.info('No build.sh script to configure')
     
+    # Ensure a usable 'secb' helper exists in the container
+    # Try to provision /usr/local/bin/secb (and a compatible '/usr/local/bin/compile') from local template
+    try:
+        from jinja2 import Template  # local import to avoid unused in other contexts
+
+        # Load helper template from this repository if available
+        template_path = (
+            Path(__file__).parent
+            / 'secb'
+            / 'preprocessor'
+            / 'templates'
+            / 'secb_helper.sh.j2'
+        )
+
+        rendered_secb = None
+        if template_path.is_file():
+            try:
+                tmpl = Template(template_path.read_text())
+                rendered_secb = tmpl.render(
+                    instance_id=instance.get('instance_id', 'unknown'),
+                    script_name='secb',
+                    work_dir=work_dir,
+                )
+                logger.info('Rendered secb helper script from local template.')
+            except Exception as e:
+                logger.warning(f'Failed to render secb template: {e}')
+
+        # Fallback minimal secb implementation if template not available
+        if not rendered_secb:
+            logger.info('Using minimal built-in secb helper script as fallback.')
+            rendered_secb = f"""#!/bin/bash\nset -euo pipefail\n\nbuild() {{\n  echo 'BUILDING THE PROJECT...'\n  cd {work_dir}\n  if [[ -f build.sh ]]; then\n    chmod +x build.sh\n    # Suppress noisy warnings while preserving errors\n    ./build.sh 1>/dev/null 2> >(grep -Fv --line-buffered -e 'warning:' -e 'SyntaxWarning:' -e 'WARNING:' >&2)\n    echo 'BUILD COMPLETED SUCCESSFULLY!'\n  else\n    echo 'build.sh not found in {work_dir}'\n    exit 1\n  fi\n}}\n\nrepro() {{\n  echo 'REPRODUCING THE ISSUE FOR {instance.get('instance_id', 'unknown')}...'\n  echo 'PLACEHOLDER: TRIGGER VULNERABILITY HERE.'\n  # NOTE: Do not exit 0 when actually reproducing\n}}\n\npatch() {{\n  echo 'PATCHING THE PROJECT...'\n  cd {work_dir}\n  if [[ -f /testcase/model_patch.diff ]]; then\n    git apply /testcase/model_patch.diff\n    echo 'PATCH APPLIED SUCCESSFULLY!'\n  else\n    echo 'PATCH FILE NOT FOUND: /testcase/model_patch.diff'\n    exit 1\n  fi\n}}\n\ncase "${1:-}" in\n  build) build ;;\n  repro) repro ;;\n  patch) patch ;;\n  *) echo 'Usage: secb [build|repro|patch]'; exit 1 ;;\nesac\n"""
+
+        # Also provide a minimal '/usr/local/bin/compile' that secb template expects
+        compile_script = f"""#!/bin/bash\nset -euo pipefail\ncd {work_dir}\nif [[ -f build.sh ]]; then\n  chmod +x build.sh\n  ./build.sh 1>/dev/null 2> >(grep -Fv --line-buffered -e 'warning:' -e 'SyntaxWarning:' -e 'WARNING:' >&2)\nelse\n  echo 'build.sh not found in {work_dir}'\n  exit 1\nfi\n"""
+
+        import base64
+
+        def _write_executable(path_in_container: str, content: str) -> None:
+            encoded = base64.b64encode(content.encode('utf-8')).decode('ascii')
+            py_decode = "python3 -c 'import sys,base64; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))'"
+            cmd = (
+                f'ENC="{encoded}"; '
+                f'printf "%s" "$ENC" | base64 -d > "{path_in_container}" 2>/dev/null || '
+                f'printf "%s" "$ENC" | {py_decode} > "{path_in_container}"; '
+                f'chmod +x "{path_in_container}"'
+            )
+            action = CmdRunAction(command=cmd)
+            action.set_hard_timeout(30)
+            obs_local = runtime.run_action(action)
+            if isinstance(obs_local, CmdOutputObservation) and obs_local.exit_code == 0:
+                logger.info(f'✓ Wrote executable: {path_in_container}')
+            else:
+                logger.warning(
+                    f'Failed to write {path_in_container}: '
+                    f"{obs_local.content if isinstance(obs_local, CmdOutputObservation) else str(obs_local)}"
+                )
+
+        # Write scripts into the container
+        _write_executable('/usr/local/bin/secb', rendered_secb)
+        _write_executable('/usr/local/bin/compile', compile_script)
+
+        # Quick sanity check
+        chk = CmdRunAction(command='secb --help || /usr/local/bin/secb --help || true')
+        chk.set_hard_timeout(10)
+        runtime.run_action(chk)
+    except Exception as e:
+        logger.warning(f'Failed to provision secb helper in container: {e}')
+
     # Create /testcase directory for artifacts
     action = CmdRunAction(command='mkdir -p /testcase')
     action.set_hard_timeout(10)
@@ -1278,8 +1346,40 @@ async def complete_runtime(
             logger.info(f"Extracted secb script from {secb_path}")
             break
     if secb_script is None:
-        logger.info('Failed to extract secb script from known locations. Proceeding without embedding secb content.')
-        secb_script = ''
+        # As a fallback, try to load and render the helper template from the host repository to embed
+        try:
+            from jinja2 import Template
+            template_path = (
+                Path(__file__).parent
+                / 'secb'
+                / 'preprocessor'
+                / 'templates'
+                / 'secb_helper.sh.j2'
+            )
+            if template_path.is_file():
+                tmpl = Template(template_path.read_text())
+                try:
+                    work_dir = instance.get('work_dir', '/src')
+                except Exception:
+                    work_dir = '/src'
+                secb_script = tmpl.render(
+                    instance_id=instance.get('instance_id', 'unknown'),
+                    script_name='secb',
+                    work_dir=work_dir,
+                )
+                logger.info(
+                    'Embedded secb helper content from local repository template.'
+                )
+            else:
+                logger.info(
+                    'Failed to extract secb script from known locations or local template. Proceeding without embedding secb content.'
+                )
+                secb_script = ''
+        except Exception as e:
+            logger.info(
+                f'Failed to extract secb script; continuing without embedding. Reason: {e}'
+            )
+            secb_script = ''
 
     # Listing artifacts from the runtime
     action = CmdRunAction(
