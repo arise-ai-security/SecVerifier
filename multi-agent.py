@@ -983,7 +983,7 @@ def process_instance(
     # Use an official OpenHands runtime image by default; allow override via env
     runtime_container_image = os.environ.get(
         'SANDBOX_RUNTIME_CONTAINER_IMAGE',
-        'ghcr.io/all-hands-ai/runtime:0.52-nikolaik',
+        'ghcr.io/all-hands-ai/runtime:0.54-nikolaik',
     )
 
     logger.info(f'Processing instance: {instance_id} using run_controller')
@@ -1996,13 +1996,13 @@ if __name__ == '__main__':
     main(
         llm_config_arg=args.llm_config,
         condenser_type=args.condenser,
-        max_iterations=100,
+        max_iterations=args.iterations,
         max_budget_per_task=args.max_budget_per_task,
         dataset_name=args.dataset_name,
-        headless=True,
+        headless=args.headless,
         output_dir=args.output_dir,
-        instance_id="gpac.cve-2023-5586",
+        instance_id=args.instance_id,
         limit=args.limit,
-        label='cve',
+        label=args.label,
         num_workers=args.num_workers,
     )
