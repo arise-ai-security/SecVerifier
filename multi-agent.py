@@ -885,7 +885,7 @@ async def initialize_repository(runtime: Runtime, instance: pd.Series) -> bool:
             rendered_secb = f"""#!/bin/bash\nset -euo pipefail\n\nbuild() {{\n  echo 'BUILDING THE PROJECT...'\n  cd {work_dir}\n  if [[ -f build.sh ]]; then\n    chmod +x build.sh\n    # Suppress noisy warnings while preserving errors\n    ./build.sh 1>/dev/null 2> >(grep -Fv --line-buffered -e 'warning:' -e 'SyntaxWarning:' -e 'WARNING:' >&2)\n    echo 'BUILD COMPLETED SUCCESSFULLY!'\n  else\n    echo 'build.sh not found in {work_dir}'\n    exit 1\n  fi\n}}\n\nrepro() {{\n  echo 'REPRODUCING THE ISSUE FOR {instance.get('instance_id', 'unknown')}...'\n  echo 'PLACEHOLDER: TRIGGER VULNERABILITY HERE.'\n  # NOTE: Do not exit 0 when actually reproducing\n}}\n\npatch() {{\n  echo 'PATCHING THE PROJECT...'\n  cd {work_dir}\n  if [[ -f /testcase/model_patch.diff ]]; then\n    git apply /testcase/model_patch.diff\n    echo 'PATCH APPLIED SUCCESSFULLY!'\n  else\n    echo 'PATCH FILE NOT FOUND: /testcase/model_patch.diff'\n    exit 1\n  fi\n}}\n\ncase "${1:-}" in\n  build) build ;;\n  repro) repro ;;\n  patch) patch ;;\n  *) echo 'Usage: secb [build|repro|patch]'; exit 1 ;;\nesac\n"""
 
         # Also provide a minimal '/usr/local/bin/compile' that secb template expects
-        compile_script = f"""#!/bin/bash\nset -euo pipefail\ncd {work_dir}\nif [[ -f build.sh ]]; then\n  chmod +x build.sh\n  ./build.sh 1>/dev/null 2> >(grep -Fv --line-buffered -e 'warning:' -e 'SyntaxWarning:' -e 'WARNING:' >&2)\nelse\n  echo 'build.sh not found in {work_dir}'\n  exit 1\nfi\n"""
+        compile_script = f"""#!/bin/bash\nset -euo pipefail\ncd {work_dir}\nexport CFLAGS="${{CFLAGS:-}} -fsanitize=address -g -O1"\nexport CXXFLAGS="${{CXXFLAGS:-}} -fsanitize=address -g -O1"\nexport LDFLAGS="${{LDFLAGS:-}} -fsanitize=address"\nif [[ -f build.sh ]]; then\n  chmod +x build.sh\n  ./build.sh 1>/dev/null 2> >(grep -Fv --line-buffered -e 'warning:' -e 'SyntaxWarning:' -e 'WARNING:' >&2)\nelse\n  echo 'build.sh not found in {work_dir}'\n  exit 1\nfi\n"""
 
         import base64
 
@@ -983,7 +983,7 @@ def process_instance(
     # Use an official OpenHands runtime image by default; allow override via env
     runtime_container_image = os.environ.get(
         'SANDBOX_RUNTIME_CONTAINER_IMAGE',
-        'ghcr.io/all-hands-ai/runtime:0.54-nikolaik',
+        'ghcr.io/all-hands-ai/runtime:0.52-nikolaik',
     )
 
     logger.info(f'Processing instance: {instance_id} using run_controller')
@@ -1996,13 +1996,13 @@ if __name__ == '__main__':
     main(
         llm_config_arg=args.llm_config,
         condenser_type=args.condenser,
-        max_iterations=args.iterations,
+        max_iterations=100,
         max_budget_per_task=args.max_budget_per_task,
         dataset_name=args.dataset_name,
-        headless=args.headless,
+        headless=True,
         output_dir=args.output_dir,
-        instance_id=args.instance_id,
+        instance_id="gpac.cve-2023-5586",
         limit=args.limit,
-        label=args.label,
+        label='cve',
         num_workers=args.num_workers,
     )
