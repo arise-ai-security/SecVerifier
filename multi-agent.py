@@ -1046,8 +1046,8 @@ def process_instance(
                 'OPENHANDS_USE_MICROMAMBA': '1',
             },
             docker_runtime_kwargs={
-                # Keep container for log inspection if it exits
-                'auto_remove': False,
+                # Automatically remove container after it exits
+                'auto_remove': True,
             },
         )
 
