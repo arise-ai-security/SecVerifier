@@ -101,6 +101,15 @@ async def run_controller(
     if agent is None:
         agent = create_agent(config)
 
+    # Initialize Claude Code session if using claude_code provider
+    from openhands.llm.claude_code_llm import ClaudeCodeLLM
+
+    if isinstance(agent.llm, ClaudeCodeLLM):
+        workspace_dir = config.workspace_mount_path_in_sandbox or '/workspace'
+        log_dir = config.save_trajectory_path or '/tmp/openhands_logs'
+        agent.llm.start_session(workspace_dir=workspace_dir, log_dir=log_dir)
+        logger.info(f'Claude Code session started for {agent.name}')
+
     # when the runtime is created, it will be connected and clone the selected repository
     repo_directory = None
     if runtime is None:
@@ -236,6 +245,13 @@ async def run_controller(
         histories = controller.get_trajectory(config.save_screenshots_in_trajectory)
         with open(file_path, 'w') as f:  # noqa: ASYNC101
             json.dump(histories, f, indent=4)
+
+    # Clean up Claude Code session if active
+    from openhands.llm.claude_code_llm import ClaudeCodeLLM
+
+    if isinstance(agent.llm, ClaudeCodeLLM):
+        agent.llm.close_session()
+        logger.info(f'Claude Code session closed for {agent.name}')
 
     return state
 

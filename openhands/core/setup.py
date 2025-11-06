@@ -210,8 +210,16 @@ def create_agent(config: OpenHandsConfig) -> Agent:
     agent_config = config.get_agent_config(config.default_agent)
     llm_config = config.get_llm_config_from_agent(config.default_agent)
 
+    # Use Claude Code CLI if specified
+    if llm_config.custom_llm_provider == 'claude_code':
+        from openhands.llm.claude_code_llm import ClaudeCodeLLM
+
+        llm_instance: LLM = ClaudeCodeLLM(config=llm_config)
+    else:
+        llm_instance: LLM = LLM(config=llm_config)
+
     agent = agent_cls(
-        llm=LLM(config=llm_config),
+        llm=llm_instance,
         config=agent_config,
     )
 
