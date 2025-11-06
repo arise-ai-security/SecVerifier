@@ -81,6 +81,7 @@ class Memory:
         # from typically OpenHands/microagents (i.e., the PUBLIC microagents)
         logger.info('[Memory Init] Starting to load global microagents...')
         import time
+
         start_time = time.time()
         self._load_global_microagents()
         elapsed = time.time() - start_time
@@ -289,7 +290,9 @@ class Memory:
         repo_agents, knowledge_agents = load_microagents_from_dir(
             GLOBAL_MICROAGENTS_DIR
         )
-        logger.debug(f'Found {len(knowledge_agents)} knowledge agents and {len(repo_agents)} repo agents')
+        logger.debug(
+            f'Found {len(knowledge_agents)} knowledge agents and {len(repo_agents)} repo agents'
+        )
         for name, agent_knowledge in knowledge_agents.items():
             self.knowledge_microagents[name] = agent_knowledge
         for name, agent_repo in repo_agents.items():
@@ -311,7 +314,9 @@ class Memory:
                 USER_MICROAGENTS_DIR
             )
 
-            logger.debug(f'Found {len(knowledge_agents)} user knowledge agents and {len(repo_agents)} user repo agents')
+            logger.debug(
+                f'Found {len(knowledge_agents)} user knowledge agents and {len(repo_agents)} user repo agents'
+            )
             for name, agent_knowledge in knowledge_agents.items():
                 self.knowledge_microagents[name] = agent_knowledge
             for name, agent_repo in repo_agents.items():

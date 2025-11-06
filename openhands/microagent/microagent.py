@@ -277,7 +277,7 @@ def load_microagents_from_dir(
     # Load all agents from microagents directory
     logger.debug(f'Loading agents from {microagent_dir}')
     if microagent_dir.exists():
-        logger.debug(f'Microagent directory exists, scanning for files...')
+        logger.debug('Microagent directory exists, scanning for files...')
         # Collect .cursorrules file from repo root and .md files from microagents dir
         cursorrules_files = []
         if (microagent_dir.parent.parent / '.cursorrules').exists():
@@ -292,7 +292,9 @@ def load_microagents_from_dir(
         logger.debug(f'Processing {total_files} total files...')
         for idx, file in enumerate(chain(cursorrules_files, md_files), 1):
             try:
-                logger.debug(f'[{idx}/{total_files}] Loading microagent from: {file.name}')
+                logger.debug(
+                    f'[{idx}/{total_files}] Loading microagent from: {file.name}'
+                )
                 agent = BaseMicroagent.load(file, microagent_dir)
                 if isinstance(agent, RepoMicroagent):
                     repo_agents[agent.name] = agent

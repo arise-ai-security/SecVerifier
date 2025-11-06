@@ -983,7 +983,7 @@ def process_instance(
     # Use an official OpenHands runtime image by default; allow override via env
     runtime_container_image = os.environ.get(
         'SANDBOX_RUNTIME_CONTAINER_IMAGE',
-        'ghcr.io/all-hands-ai/runtime:0.54-nikolaik',
+        'ghcr.io/all-hands-ai/runtime:0.52-nikolaik',
     )
 
     logger.info(f'Processing instance: {instance_id} using run_controller')
@@ -1103,7 +1103,7 @@ Please start by delegating to the {DELEGATION_SEQUENCE[0]}.
 
         runtime = create_runtime(app_config)
         call_async_from_sync(runtime.connect)
-        
+
         # Initialize the repository in the container
         init_success = asyncio.run(initialize_repository(runtime, instance))
         if not init_success:

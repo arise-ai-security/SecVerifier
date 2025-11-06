@@ -820,7 +820,11 @@ class ConversationMemory:
         # Helper: compare two MessageAction objects by source and content only
         def _same_initial(a: MessageAction, b: MessageAction) -> bool:
             try:
-                return a.source == 'user' and b.source == 'user' and (a.content or '') == (b.content or '')
+                return (
+                    a.source == 'user'
+                    and b.source == 'user'
+                    and (a.content or '') == (b.content or '')
+                )
             except Exception:
                 return False
 
@@ -841,14 +845,20 @@ class ConversationMemory:
             # but if any earlier indices were removed before it, adjust. Simpler: re-scan.
             existing_indices = []
             for idx, ev in enumerate(events):
-                if isinstance(ev, MessageAction) and ev.source == 'user' and _same_initial(ev, initial_user_action):
+                if (
+                    isinstance(ev, MessageAction)
+                    and ev.source == 'user'
+                    and _same_initial(ev, initial_user_action)
+                ):
                     existing_indices.append(idx)
 
         # Ensure a single initial user message exists
         if not existing_indices:
             # None found: insert after system message (index 1)
             if len(events) >= 1:
-                logger.debug('Initial user message not found in history. Inserting a new one at index 1.')
+                logger.debug(
+                    'Initial user message not found in history. Inserting a new one at index 1.'
+                )
                 insert_at = 1 if len(events) >= 1 else 0
                 events.insert(insert_at, initial_user_action)
                 return
@@ -866,7 +876,9 @@ class ConversationMemory:
             # Clamp desired index to valid range
             desired_idx = min(desired_idx, len(events))
             events.insert(desired_idx, msg)
-            logger.debug('Moved initial user message to index 1 for proper history ordering.')
+            logger.debug(
+                'Moved initial user message to index 1 for proper history ordering.'
+            )
 
         # If events[1] is already a user MessageAction but not the same content, we keep it
         # (it may be a user follow-up). We avoid logging at info level to prevent log spam.

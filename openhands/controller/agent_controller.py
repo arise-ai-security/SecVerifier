@@ -680,7 +680,7 @@ class AgentController:
             max_value=self._initial_max_iterations,
             headless_mode=self.headless_mode,
         )
-        
+
         delegate_budget_flag = None
         if self._initial_max_budget_per_task:
             delegate_budget_flag = BudgetControlFlag(
