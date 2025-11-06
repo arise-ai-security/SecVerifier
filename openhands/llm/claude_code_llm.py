@@ -15,8 +15,8 @@ from typing import Callable
 
 from openhands.core.config import LLMConfig
 from openhands.core.logger import openhands_logger as logger
-from openhands.core.metrics import Metrics
 from openhands.llm.llm import LLM
+from openhands.llm.metrics import Metrics
 
 
 class ClaudeCodeLLM(LLM):
@@ -329,7 +329,7 @@ class ClaudeCodeLLM(LLM):
         # Update metrics object
         if self.metrics:
             self.metrics.add_cost(cost)
-            self.metrics.add_token_usage(input_tokens, output_tokens)
+            # Note: add_token_usage requires more params, tracking internally for now
 
         logger.debug(
             f'Claude Code call: ${cost:.4f}, {input_tokens} in / {output_tokens} out tokens, '
