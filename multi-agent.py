@@ -1103,7 +1103,7 @@ Please start by delegating to the {DELEGATION_SEQUENCE[0]}.
 
         runtime = create_runtime(app_config)
         call_async_from_sync(runtime.connect)
-
+        
         # Initialize the repository in the container
         init_success = asyncio.run(initialize_repository(runtime, instance))
         if not init_success:

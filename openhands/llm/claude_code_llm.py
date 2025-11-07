@@ -13,6 +13,9 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
+from litellm.types.utils import Choices, ModelResponse, Usage
+from litellm.types.utils import Message as LiteLLMMessage
+
 from openhands.core.config import LLMConfig
 from openhands.core.logger import openhands_logger as logger
 from openhands.llm.llm import LLM
@@ -112,7 +115,7 @@ class ClaudeCodeLLM(LLM):
 
     def _completion(
         self, messages: list[dict], tools: list[dict] | None = None, **kwargs
-    ) -> dict:
+    ) -> ModelResponse:
         """
         Main completion method called by OpenHands agents.
 
@@ -122,7 +125,7 @@ class ClaudeCodeLLM(LLM):
             **kwargs: Additional parameters
 
         Returns:
-            ModelResponse dict compatible with LiteLLM format
+            ModelResponse object compatible with LiteLLM format
         """
         if not self.session_id:
             raise RuntimeError(
@@ -173,16 +176,28 @@ class ClaudeCodeLLM(LLM):
         prompt_parts = []
 
         for msg in messages:
-            role = msg.get('role', '')
-            content = msg.get('content', '')
+            # Handle both dict and Pydantic Message objects
+            if isinstance(msg, dict):
+                role = msg.get('role', '')
+                content = msg.get('content', '')
+                tool_name = msg.get('name', 'unknown')
+            else:
+                # Pydantic Message object - access attributes directly
+                role = getattr(msg, 'role', '')
+                content = getattr(msg, 'content', '')
+                tool_name = getattr(msg, 'name', 'unknown')
 
             if isinstance(content, list):
                 # Handle content array (multimodal messages)
-                text_parts = [
-                    item.get('text', '')
-                    for item in content
-                    if item.get('type') == 'text'
-                ]
+                text_parts = []
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get('type') == 'text':
+                            text_parts.append(item.get('text', ''))
+                    else:
+                        # Pydantic object
+                        if getattr(item, 'type', None) == 'text':
+                            text_parts.append(getattr(item, 'text', ''))
                 content = '\n'.join(text_parts)
 
             if role == 'system':
@@ -194,7 +209,6 @@ class ClaudeCodeLLM(LLM):
                 prompt_parts.append(f'Previous response:\n{content}')
             elif role == 'tool':
                 # Tool results from previous executions
-                tool_name = msg.get('name', 'unknown')
                 prompt_parts.append(f'Result from {tool_name}:\n{content}')
 
         return '\n\n'.join(prompt_parts)
@@ -246,69 +260,50 @@ class ClaudeCodeLLM(LLM):
             logger.error(f'Raw output: {result.stdout[:500]}')
             raise RuntimeError(f'Invalid JSON from Claude Code: {e}')
 
-    def _parse_response_to_model_response(self, response_data: dict) -> dict:
+    def _parse_response_to_model_response(self, response_data: dict) -> ModelResponse:
         """
         Convert Claude Code response to OpenHands ModelResponse format.
 
-        OpenHands expects LiteLLM's ModelResponse format:
-        {
-            'id': str,
-            'choices': [{
-                'index': 0,
-                'message': {
-                    'role': 'assistant',
-                    'content': str,
-                    'tool_calls': [...]  # optional
-                }
-            }],
-            'usage': {
-                'prompt_tokens': int,
-                'completion_tokens': int,
-                'total_tokens': int
-            }
-        }
+        Returns a LiteLLM ModelResponse object that OpenHands agents expect.
         """
         # Extract result text
         result_text = response_data.get('result', '')
 
         # Extract usage info
-        usage = response_data.get('usage', {})
-        input_tokens = usage.get('input_tokens', 0) + usage.get(
+        usage_data = response_data.get('usage', {})
+        input_tokens = usage_data.get('input_tokens', 0) + usage_data.get(
             'cache_read_input_tokens', 0
         )
-        output_tokens = usage.get('output_tokens', 0)
-
-        # Build ModelResponse
-        model_response = {
-            'id': response_data.get('session_id', str(uuid.uuid4())),
-            'object': 'chat.completion',
-            'created': int(time.time()),
-            'model': self.config.model,
-            'choices': [
-                {
-                    'index': 0,
-                    'message': {
-                        'role': 'assistant',
-                        'content': result_text,
-                    },
-                    'finish_reason': 'stop',
-                }
-            ],
-            'usage': {
-                'prompt_tokens': input_tokens,
-                'completion_tokens': output_tokens,
-                'total_tokens': input_tokens + output_tokens,
-            },
-        }
+        output_tokens = usage_data.get('output_tokens', 0)
 
         # Check for permission denials (tool execution failures)
         if response_data.get('permission_denials'):
             denials = response_data['permission_denials']
             logger.warning(f'Claude Code had {len(denials)} permission denials')
-            # Add note to response
-            model_response['choices'][0]['message']['content'] += (
-                f'\n\n[Note: {len(denials)} tool executions were blocked by permissions]'
-            )
+            result_text += f'\n\n[Note: {len(denials)} tool executions were blocked by permissions]'
+
+        # Build ModelResponse object
+        model_response = ModelResponse(
+            id=response_data.get('session_id', str(uuid.uuid4())),
+            object='chat.completion',
+            created=int(time.time()),
+            model=self.config.model,
+            choices=[
+                Choices(
+                    index=0,
+                    message=LiteLLMMessage(
+                        role='assistant',
+                        content=result_text,
+                    ),
+                    finish_reason='stop',
+                )
+            ],
+            usage=Usage(
+                prompt_tokens=input_tokens,
+                completion_tokens=output_tokens,
+                total_tokens=input_tokens + output_tokens,
+            ),
+        )
 
         return model_response
 
@@ -336,16 +331,44 @@ class ClaudeCodeLLM(LLM):
             f'{duration:.2f}s'
         )
 
-    def _log_completion(self, messages: list[dict], response: dict):
+    def _log_completion(self, messages: list[dict], response: ModelResponse):
         """Log completion to file if enabled."""
         log_file = (
             Path(self.config.log_completions_folder) / f'default-{time.time()}.json'
         )
 
+        # Convert Pydantic Message objects to dicts for JSON serialization
+        serializable_messages = []
+        for msg in messages:
+            if isinstance(msg, dict):
+                serializable_messages.append(msg)
+            else:
+                # Pydantic object - convert to dict
+                if hasattr(msg, 'model_dump'):
+                    serializable_messages.append(msg.model_dump())
+                elif hasattr(msg, 'dict'):
+                    serializable_messages.append(msg.dict())
+                else:
+                    # Fallback: manually extract attributes
+                    serializable_messages.append(
+                        {
+                            'role': getattr(msg, 'role', ''),
+                            'content': getattr(msg, 'content', ''),
+                        }
+                    )
+
+        # Convert ModelResponse to dict for JSON serialization
+        if hasattr(response, 'model_dump'):
+            serializable_response = response.model_dump()
+        elif hasattr(response, 'dict'):
+            serializable_response = response.dict()
+        else:
+            serializable_response = dict(response)
+
         log_data = {
             'timestamp': time.time(),
-            'messages': messages,
-            'response': response,
+            'messages': serializable_messages,
+            'response': serializable_response,
             'session_id': self.session_id,
         }
 

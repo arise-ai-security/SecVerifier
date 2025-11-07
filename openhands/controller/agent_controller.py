@@ -664,11 +664,21 @@ class AgentController:
         agent_config = self.agent_configs.get(action.agent, self.agent.config)
         llm_config = self.agent_to_llm_config.get(action.agent, self.agent.llm.config)
         # Make sure metrics are shared between parent and child for global accumulation
-        llm = LLM(
-            config=llm_config,
-            retry_listener=self.agent.llm.retry_listener,
-            metrics=self.state.metrics,
-        )
+        # Support custom LLM providers (e.g., Claude Code CLI)
+        if llm_config.custom_llm_provider == 'claude_code':
+            from openhands.llm.claude_code_llm import ClaudeCodeLLM
+
+            llm = ClaudeCodeLLM(
+                config=llm_config,
+                retry_listener=self.agent.llm.retry_listener,
+                metrics=self.state.metrics,
+            )
+        else:
+            llm = LLM(
+                config=llm_config,
+                retry_listener=self.agent.llm.retry_listener,
+                metrics=self.state.metrics,
+            )
         delegate_agent = agent_cls(llm=llm, config=agent_config)
 
         # Create fresh iteration and budget flags for the delegate
@@ -710,6 +720,23 @@ class AgentController:
             f'start delegate, creating agent {delegate_agent.name} using LLM {llm}',
         )
 
+        # Initialize Claude Code session if using ClaudeCodeLLM
+        if llm_config.custom_llm_provider == 'claude_code':
+            from openhands.llm.claude_code_llm import ClaudeCodeLLM
+
+            if isinstance(llm, ClaudeCodeLLM):
+                # Use the same workspace and log directory as parent
+                workspace_dir = getattr(self.agent.llm, 'workspace_dir', '/workspace')
+                log_dir = getattr(self.agent.llm, 'thinking_log_path', None)
+                if log_dir:
+                    log_dir = str(log_dir.parent)
+                else:
+                    log_dir = '/tmp/openhands_logs'
+                llm.start_session(workspace_dir=workspace_dir, log_dir=log_dir)
+                self.log(
+                    'info', f'Claude Code session started for delegate {action.agent}'
+                )
+
         # Create the delegate with is_delegate=True so it does NOT subscribe directly
         self.delegate = AgentController(
             sid=self.id + '-delegate',
@@ -745,6 +772,16 @@ class AgentController:
         # Calculate delegate-specific metrics before closing the delegate
         delegate_metrics = self.state.get_local_metrics()
         logger.info(f'Local metrics for delegate: {delegate_metrics}')
+
+        # Close Claude Code session if delegate used ClaudeCodeLLM
+        from openhands.llm.claude_code_llm import ClaudeCodeLLM
+
+        if isinstance(self.delegate.agent.llm, ClaudeCodeLLM):
+            self.delegate.agent.llm.close_session()
+            self.log(
+                'info',
+                f'Claude Code session closed for delegate {self.delegate.agent.name}',
+            )
 
         # close the delegate controller before adding new events
         asyncio.get_event_loop().run_until_complete(self.delegate.close())
