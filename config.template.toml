@@ -211,6 +211,33 @@ model = "gpt-4o"
 # ]
 #safety_settings = []
 
+################################################################################
+# Claude Code SDK configuration example
+# Use this configuration to integrate Claude Code as the backbone LLM
+################################################################################
+[llm.claude_agent]
+# Model to use with Claude Code SDK
+model = "claude-sonnet-4-5-20250929"
+
+# Set custom provider to claude_code to activate ClaudeCodeLLM
+custom_llm_provider = "claude_code"
+
+# Enable native tool calling (Claude Code has built-in tool support)
+native_tool_calling = true
+
+# API key for Claude (can also be set via ANTHROPIC_API_KEY environment variable)
+# api_key = "${ANTHROPIC_API_KEY}"
+
+# Optional: Path to Claude Code CLI binary
+# Set via CLAUDE_CODE_CLI_PATH environment variable if needed
+
+# Optional: Working directory for Claude Code
+# Set via CLAUDE_CODE_CWD environment variable if needed
+
+# Optional: Permission mode for Claude Code
+# Options: "bypassPermissions", "askPermissions"
+# Set via CLAUDE_CODE_PERMISSION_MODE environment variable (default: bypassPermissions)
+
 [llm.draft_editor]
 # The number of times llm_editor tries to fix an error when editing.
 correct_num = 5
