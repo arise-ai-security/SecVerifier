@@ -6,7 +6,7 @@ NUM_WORKERS=1
 LLM_CONFIG="llm.4o"
 CONDENSER="recent"
 INSTANCE_ID=""
-DATASET_NAME="SEC-bench/Seed"
+DATASET_NAME="SongTonyLi/CVE_Instances"
 LIMIT=""  # Changed to integer default value
 MAX_BUDGET=""
 SCRIPT="multi-agent.py"
@@ -21,7 +21,7 @@ show_help() {
     echo "  -s: Limit the number of instances to process"
     echo "  -t: Maximum budget per task"
     echo "  -b: Label"
-    echo "  -d: Dataset name (default: SEC-bench/Seed)"
+    echo "  -d: Dataset name (default: SongTonyLi/CVE_Instances)"
     echo "  -w: Number of workers (default: 1)"
     echo "  -h: Show this help message"
     exit 1
