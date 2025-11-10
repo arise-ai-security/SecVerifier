@@ -117,6 +117,9 @@ MODELS_WITHOUT_STOP_WORDS = [
     'o1',
     'o1-2024-12-17',
     'xai/grok-4-0709',
+    # Newer OpenAI reasoning family models reject `stop` params
+    # Track by family prefix to cover dated variants as well
+    'gpt-5',
 ]
 
 
@@ -286,6 +289,19 @@ class LLM(RetryMixin, DebugMixin):
                 messages_kwarg if isinstance(messages_kwarg, list) else [messages_kwarg]
             )
 
+            # helper to identify models that disallow stop words
+            def _disallows_stop() -> bool:
+                model_full = self.config.model
+                model_short = model_full.split('/')[-1]
+                for m in MODELS_WITHOUT_STOP_WORDS:
+                    # exact match on full name (e.g., provider/model)
+                    if model_full == m:
+                        return True
+                    # for family markers like 'gpt-5', match short name equality or prefix
+                    if '/' not in m and (model_short == m or model_short.startswith(m)):
+                        return True
+                return False
+
             # handle conversion of to non-function calling messages if needed
             original_fncall_messages = copy.deepcopy(messages)
             mock_fncall_tools = None
@@ -306,7 +322,7 @@ class LLM(RetryMixin, DebugMixin):
                 kwargs['messages'] = messages
 
                 # add stop words if the model supports it
-                if self.config.model not in MODELS_WITHOUT_STOP_WORDS:
+                if not _disallows_stop():
                     kwargs['stop'] = STOP_WORDS
 
                 mock_fncall_tools = kwargs.pop('tools')
@@ -336,6 +352,11 @@ class LLM(RetryMixin, DebugMixin):
             # if we're not using litellm proxy, remove the extra_body
             if 'litellm_proxy' not in self.config.model:
                 kwargs.pop('extra_body', None)
+
+            # Some providers/models (e.g., GPT-5 family) don't support `stop`.
+            # Drop it proactively for those models even if callers passed it.
+            if 'stop' in kwargs and _disallows_stop():
+                kwargs.pop('stop', None)
 
             # Record start time for latency measurement
             start_time = time.time()
