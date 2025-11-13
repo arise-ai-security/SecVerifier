@@ -1,0 +1,222 @@
+# Custom SEC-Bench Base Image
+# arise-lab-security/secb.base:test
+#
+# This image is based on hwiwonlee/secb.base:20241001 upgraded to Python 3.12
+# Compatible with OpenHands SDK (requires Python 3.11+)
+#
+# Base: Google OSS-Fuzz base-builder-python
+# Purpose: Foundation for SEC-bench vulnerability testing with sanitizers and fuzzing tools
+
+FROM gcr.io/oss-fuzz-base/base-builder-python
+
+LABEL maintainer="ARISE Lab Security"
+LABEL description="SEC-Bench base image with Python 3.12 for OpenHands SDK compatibility"
+LABEL version="1.0.0"
+LABEL python.version="3.12"
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ============================================================================
+# PYTHON 3.12 INSTALLATION
+# ============================================================================
+# Note: OpenHands SDK requires Python 3.11+, using Python 3.12 for latest features
+# Python 3.12 removed distutils (deprecated since 3.10), using setuptools instead
+
+RUN apt-get update && \
+    apt-get install -y \
+        software-properties-common \
+        build-essential \
+        zlib1g-dev \
+        libncurses5-dev \
+        libgdbm-dev \
+        libnss3-dev \
+        libssl-dev \
+        libreadline-dev \
+        libffi-dev \
+        libsqlite3-dev \
+        libbz2-dev \
+        liblzma-dev \
+        wget && \
+    rm -rf /var/lib/apt/lists/*
+
+# Download and build Python 3.12.7
+WORKDIR /tmp/python-build
+RUN wget https://www.python.org/ftp/python/3.12.7/Python-3.12.7.tgz && \
+    tar -xf Python-3.12.7.tgz && \
+    cd Python-3.12.7 && \
+    ./configure \
+        --enable-optimizations \
+        --enable-shared \
+        --with-system-ffi \
+        --with-computed-gotos \
+        --enable-loadable-sqlite-extensions \
+        LDFLAGS="-Wl,-rpath /usr/local/lib" && \
+    make -j$(nproc) && \
+    make altinstall && \
+    cd /tmp && \
+    rm -rf /tmp/python-build
+
+# Update library cache for shared libraries
+RUN ldconfig
+
+# Force Python 3.12 as the default by removing old symlinks and creating new ones
+RUN rm -f /usr/bin/python3 /usr/bin/python /usr/local/bin/python /usr/local/bin/python3 && \
+    ln -sf /usr/local/bin/python3.12 /usr/bin/python3 && \
+    ln -sf /usr/local/bin/python3.12 /usr/bin/python && \
+    ln -sf /usr/local/bin/python3.12 /usr/local/bin/python && \
+    ln -sf /usr/local/bin/python3.12 /usr/local/bin/python3
+
+# Bootstrap pip and upgrade
+RUN python3 -m ensurepip --upgrade && \
+    python3 -m pip install --upgrade pip setuptools wheel
+
+# Verify Python version
+RUN python3 --version && \
+    python3 -c "import sys; assert sys.version_info >= (3, 12), f'Python 3.12+ required, got {sys.version_info}'"
+
+# ============================================================================
+# CUSTOM OPENSSL INSTALLATION (for Python crypto support)
+# ============================================================================
+# Compile OpenSSL 1.1.1w from source for better compatibility with fuzzing tools
+
+WORKDIR /tmp
+RUN wget https://www.openssl.org/source/openssl-1.1.1w.tar.gz && \
+    tar -xzf openssl-1.1.1w.tar.gz && \
+    cd openssl-1.1.1w && \
+    ./config --prefix=/usr/local/ssl --openssldir=/usr/local/ssl shared zlib && \
+    make -j$(nproc) && \
+    make install && \
+    cd .. && \
+    rm -rf openssl-1.1.1w openssl-1.1.1w.tar.gz
+
+# Update library path to include custom OpenSSL
+ENV LD_LIBRARY_PATH="/usr/local/ssl/lib:${LD_LIBRARY_PATH}"
+ENV PATH="/usr/local/ssl/bin:${PATH}"
+
+# ============================================================================
+# DEVELOPMENT TOOLS AND LIBRARIES
+# ============================================================================
+
+RUN apt-get update && apt-get install -y \
+    # Build essentials
+    build-essential \
+    autoconf \
+    automake \
+    libtool \
+    pkg-config \
+    cmake \
+    ninja-build \
+    # Common libraries for vulnerability testing
+    libssl-dev \
+    libcurl4-openssl-dev \
+    libxml2-dev \
+    libz-dev \
+    libsqlite3-dev \
+    # Development utilities
+    git \
+    wget \
+    curl \
+    vim \
+    nano \
+    jq \
+    unzip \
+    zip \
+    rsync \
+    && rm -rf /var/lib/apt/lists/*
+
+# ============================================================================
+# PYTHON PACKAGE MANAGERS AND TOOLS
+# ============================================================================
+
+# Upgrade pip, setuptools, wheel
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
+# Install essential Python development tools
+RUN python3 -m pip install \
+    pipx \
+    poetry \
+    virtualenv \
+    tox \
+    pytest \
+    pytest-timeout \
+    pytest-xdist
+
+# Install pipx tools globally
+RUN pipx ensurepath
+
+# Install micromamba (conda alternative for package management)
+RUN curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba && \
+    mv bin/micromamba /usr/local/bin/ && \
+    rmdir bin
+
+# ============================================================================
+# OPENHANDS SDK DEPENDENCIES
+# ============================================================================
+# Pre-install OpenHands SDK and dependencies for faster container startup
+
+RUN python3 -m pip install \
+    openhands-sdk \
+    openhands-tools \
+    openhands>=1.0.0 \
+    openhands-workspace>=0.1.0 \
+    openhands-agent-server>=0.1.0 \
+    playwright \
+    && playwright install chromium --with-deps
+
+# ============================================================================
+# SEC-BENCH ENVIRONMENT VARIABLES
+# ============================================================================
+# These match the original hwiwonlee/secb.base:20241001 environment
+
+ENV SRC=/src \
+    WORK=/work \
+    OUT=/out \
+    SANITIZER=address \
+    FUZZING_ENGINE=libfuzzer \
+    ARCHITECTURE=x86_64 \
+    CC=clang \
+    CXX=clang++ \
+    CCC=clang++ \
+    CFLAGS="-O1 -fno-omit-frame-pointer -gline-tables-only -Wno-error=enum-constexpr-conversion -Wno-error=incompatible-function-pointer-types -Wno-error=int-conversion -Wno-error=deprecated-declarations -Wno-error=implicit-function-declaration -Wno-error=implicit-int -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION" \
+    CXXFLAGS="-O1 -fno-omit-frame-pointer -gline-tables-only -Wno-error=enum-constexpr-conversion -Wno-error=incompatible-function-pointer-types -Wno-error=int-conversion -Wno-error=deprecated-declarations -Wno-error=implicit-function-declaration -Wno-error=implicit-int -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION -stdlib=libc++" \
+    UBSAN_OPTIONS="silence_unsigned_overflow=1" \
+    DFSAN_OPTIONS="warn_unimplemented=0"
+
+# Sanitizer flags (matching OSS-Fuzz configuration)
+ENV SANITIZER_FLAGS_address="-fsanitize=address -fsanitize-address-use-after-scope" \
+    SANITIZER_FLAGS_undefined="-fsanitize=array-bounds,bool,builtin,enum,function,integer-divide-by-zero,null,object-size,return,returns-nonnull-attribute,shift,signed-integer-overflow,unsigned-integer-overflow,unreachable,vla-bound,vptr -fno-sanitize-recover=array-bounds,bool,builtin,enum,function,integer-divide-by-zero,null,object-size,return,returns-nonnull-attribute,shift,signed-integer-overflow,unreachable,vla-bound,vptr" \
+    SANITIZER_FLAGS_memory="-fsanitize=memory -fsanitize-memory-track-origins" \
+    SANITIZER_FLAGS_thread="-fsanitize=thread" \
+    SANITIZER_FLAGS_hwaddress="-fsanitize=hwaddress -fuse-ld=lld -Wno-unused-command-line-argument"
+
+# ============================================================================
+# DIRECTORY STRUCTURE
+# ============================================================================
+
+# Create standard directories
+RUN mkdir -p /src /work /out /testcase && \
+    chmod 777 /src /work /out /testcase
+
+# Set working directory
+WORKDIR /src
+
+# ============================================================================
+# VERIFICATION AND METADATA
+# ============================================================================
+
+# Verify Python version and key packages
+RUN python3 --version && \
+    python3 -c "import sys; print(f'Python: {sys.version}')" && \
+    python3 -m pip list | grep -E "openhands|playwright" && \
+    echo "✅ Python 3.12 configured successfully" && \
+    echo "✅ OpenHands SDK installed" && \
+    echo "✅ Sanitizers configured" && \
+    echo "✅ Base image ready"
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python3 --version && test -d /src && test -d /testcase || exit 1
+
+# Default command
+CMD ["/bin/bash"]

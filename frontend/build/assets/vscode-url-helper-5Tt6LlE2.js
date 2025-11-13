@@ -1,1 +1,0 @@
-function o(t){if(!t)return null;try{const n=new URL(t);return n.hostname==="localhost"&&window.location.hostname!=="localhost"?(n.hostname=window.location.hostname,n.toString()):t}catch{return t}}export{o as t};

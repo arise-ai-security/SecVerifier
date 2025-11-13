@@ -1,1 +1,0 @@
-import{u as i}from"./open-hands-axios-BHmDa7Dt.js";const o=()=>{const e=["optimistic_user_message"],s=i();return{setOptimisticUserMessage:t=>{s.setQueryData(e,t)},getOptimisticUserMessage:()=>s.getQueryData(e),removeOptimisticUserMessage:()=>{s.removeQueries({queryKey:e})}}};export{o as u};

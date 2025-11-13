@@ -1,1 +1,0 @@
-import{u as o}from"./chunk-ZYFC6VSF-CV8XXl5-.js";function e(){const{conversationId:r}=o();if(!r)throw new Error("useConversationId must be used within a route that has a conversationId parameter");return{conversationId:r}}export{e as u};
