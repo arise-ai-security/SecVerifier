@@ -1,0 +1,7 @@
+[tool.uv.workspace]
+members = [
+  "openhands-sdk",
+  "openhands-tools",
+  "openhands-workspace",
+  "openhands-agent-server",
+]

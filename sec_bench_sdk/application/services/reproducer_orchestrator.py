@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -79,8 +80,15 @@ class ReproducerOrchestrator:
         Returns:
             ReproducerOutput with results from all phases
         """
-        # Import DockerWorkspace here to avoid module-level import issues
-        from openhands.workspace import DockerWorkspace
+        # Import DockerWorkspace with a temporary CWD shim so OpenHands
+        # doesn't try to resolve a monorepo root in site-packages
+        old_cwd = os.getcwd()
+        shim_root = self._ensure_openhands_uv_workspace_shim()
+        try:
+            os.chdir(shim_root)
+            from openhands.workspace import DockerWorkspace  # type: ignore
+        finally:
+            os.chdir(old_cwd)
 
         output = ReproducerOutput(instance_id=input_data.instance_id)
 
@@ -93,8 +101,13 @@ class ReproducerOrchestrator:
             # Create ONE workspace for all phases
             # This is CRITICAL - state must persist across phases
             logger.info(f"[{input_data.instance_id}] Creating Docker workspace...")
-            with DockerWorkspace(
+            # Build a lightweight agent-server image on top of the instance image
+            agent_server_image = self.docker_manager.ensure_agent_server_image(
                 base_image=instance_image,
+                instance_id=input_data.instance_id,
+            )
+            with DockerWorkspace(
+                server_image=agent_server_image,
                 host_port=self.host_port,
                 extra_ports=self.extra_ports,
                 platform=detect_platform(),
@@ -170,6 +183,62 @@ class ReproducerOrchestrator:
             output.error_message = f"Orchestrator error: {str(e)}\n{error_details}"
             return output
 
+    def _ensure_openhands_uv_workspace_shim(self) -> Path:
+        """Create a minimal OpenHands UV workspace layout for import-time checks.
+
+        The OpenHands agent-server build helpers try to discover a UV workspace root
+        at import time. When using the pip-installed packages (not the monorepo),
+        that discovery fails. We provide a tiny shim that satisfies the discovery:
+
+        - A root `pyproject.toml` with [tool.uv.workspace].members
+        - Subfolders: openhands-sdk, openhands-tools, openhands-workspace, openhands-agent-server
+          each with a minimal `pyproject.toml`
+
+        Returns:
+            Path to the shim root directory.
+        """
+        # Place the shim inside this repository's workspace dir for stability
+        repo_root = Path(__file__).resolve().parents[3]
+        shim_root = repo_root / "workspace" / "_openhands_uv_shim"
+        shim_root.mkdir(parents=True, exist_ok=True)
+
+        # Root pyproject with UV workspace members
+        root_pyproject = shim_root / "pyproject.toml"
+        if not root_pyproject.exists():
+            root_pyproject.write_text(
+                """
+[tool.uv.workspace]
+members = [
+  "openhands-sdk",
+  "openhands-tools",
+  "openhands-workspace",
+  "openhands-agent-server",
+]
+""".strip()
+            )
+
+        # Minimal subproject pyprojects; only `openhands-sdk` might be read for version
+        subprojects = [
+            ("openhands-sdk", "openhands-sdk", "0.0.0-shim"),
+            ("openhands-tools", "openhands-tools", "0.0.0-shim"),
+            ("openhands-workspace", "openhands-workspace", "0.0.0-shim"),
+            ("openhands-agent-server", "openhands-agent-server", "0.0.0-shim"),
+        ]
+        for folder, name, version in subprojects:
+            subdir = shim_root / folder
+            subdir.mkdir(parents=True, exist_ok=True)
+            py = subdir / "pyproject.toml"
+            if not py.exists():
+                py.write_text(
+                    f"""
+[project]
+name = "{name}"
+version = "{version}"
+""".strip()
+                )
+
+        return shim_root
+
     def _setup_workspace(self, workspace: 'DockerWorkspace', input_data: ReproducerInput):
         """Initialize the workspace before agent execution.
 
@@ -197,7 +266,14 @@ class ReproducerOrchestrator:
                 f"git clone --depth 1 {repo_url} /src/repo || git clone {repo_url} /src/repo"
             )
 
-            if clone_result.returncode != 0:
+            # Handle different SDK result schemas (exit_code vs returncode)
+            clone_rc = getattr(clone_result, 'returncode', None)
+            if clone_rc is None:
+                clone_rc = getattr(clone_result, 'exit_code', None)
+            if isinstance(clone_rc, str) and clone_rc.isdigit():
+                clone_rc = int(clone_rc)
+
+            if clone_rc not in (0, None):
                 logger.warning(f"Clone failed with shallow history, trying full clone...")
                 workspace.execute_command(f"git clone {repo_url} /src/repo")
 

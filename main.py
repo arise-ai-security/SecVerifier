@@ -26,12 +26,40 @@ os.environ.setdefault('OPENHANDS_DEFAULT_AGENT_IMAGE', 'arise-lab-security/secb.
 os.environ.setdefault('SDK_SHA', 'unknown')
 os.environ.setdefault('SDK_REF', 'main')
 
+# Monkey-patch openhands.agent_server.docker.build to avoid SDK workspace root check
+# We need to patch _default_sdk_project_root BEFORE the build module initializes
+import sys
+from pathlib import Path as _Path
+
+# Create fake SDK workspace structure before any openhands imports
+_fake_sdk_root = _Path('/tmp/openhands_sdk_fake_root')
+_fake_sdk_root.mkdir(exist_ok=True)
+
+# Create minimal pyproject.toml with workspace members
+_pyproject = _fake_sdk_root / 'pyproject.toml'
+_pyproject.write_text('''[tool.uv.workspace]
+members = ["openhands/*"]
+''')
+
+# Create fake subproject directories with pyproject.toml files
+for _subproject in ['openhands-sdk', 'openhands-tools', 'openhands-workspace', 'openhands-agent-server']:
+    _subdir = _fake_sdk_root / _subproject
+    _subdir.mkdir(exist_ok=True)
+    (_subdir / 'pyproject.toml').write_text(f'[project]\nname = "{_subproject}"\n')
+
+# Temporarily change directory to fake root so _default_sdk_project_root() finds it
+_original_cwd = os.getcwd()
+os.chdir(_fake_sdk_root)
+
 from sec_bench_sdk.application.dto.phase_data import ReproducerInput
 from sec_bench_sdk.application.services.phase_executor import PhaseExecutor
 from sec_bench_sdk.application.services.reproducer_orchestrator import ReproducerOrchestrator
 from sec_bench_sdk.infrastructure.sdk.agent_builder import AgentBuilder
 from sec_bench_sdk.infrastructure.sdk.conversation_runner import ConversationRunner
 from sec_bench_sdk.infrastructure.sdk.llm_factory import LLMConfig
+
+# Restore original working directory after imports
+os.chdir(_original_cwd)
 
 
 @click.command()

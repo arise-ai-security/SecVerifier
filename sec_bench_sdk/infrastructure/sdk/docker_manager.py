@@ -157,6 +157,71 @@ class InstanceDockerManager:
         logger.info(f"Building instance image from dataset: {instance_id}")
         return self._build_instance_image(instance_data)
 
+    def ensure_agent_server_image(self, base_image: str, instance_id: str) -> str:
+        """Build a minimal OpenHands agent-server image on top of the base image.
+
+        This avoids OpenHands' monorepo build by installing the server via pip.
+
+        Args:
+            base_image: The base instance image (e.g., `secb-instance:<id>`)
+            instance_id: Dataset instance id
+
+        Returns:
+            The built agent-server image tag
+        """
+        image_tag = f"secb-agent-server:{instance_id}"
+
+        # Reuse if present
+        if self._image_exists_locally(image_tag):
+            logger.info(f"Using cached agent-server image: {image_tag}")
+            return image_tag
+
+        logger.info(f"Building agent-server image from base: {base_image}")
+
+        dockerfile = f"""
+ARG BASE_IMAGE
+FROM ${{BASE_IMAGE}}
+
+# Ensure Python and pip are available
+RUN set -eux; \
+    if ! command -v python3 >/dev/null 2>&1; then \
+        apt-get update; \
+        apt-get install -y --no-install-recommends python3 python3-pip ca-certificates curl wget git; \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Install OpenHands agent server (pulls required dependencies)
+RUN python3 -m pip install --no-cache-dir --upgrade pip && \
+    python3 -m pip install --no-cache-dir openhands-agent-server
+
+EXPOSE 8000
+ENTRYPOINT ["python3", "-m", "openhands.agent_server"]
+"""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ctx = Path(temp_dir)
+            (ctx / "Dockerfile").write_text(dockerfile)
+            try:
+                subprocess.run(
+                    [
+                        "docker", "build",
+                        "--platform", self.platform,
+                        "--build-arg", f"BASE_IMAGE={base_image}",
+                        "-t", image_tag,
+                        str(ctx),
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+                logger.info(f"Successfully built agent-server image: {image_tag}")
+                return image_tag
+            except subprocess.CalledProcessError as e:
+                err = e.stderr.decode() if e.stderr else str(e)
+                logger.error(f"Failed to build agent-server image: {err}")
+                raise RuntimeError(
+                    f"Failed to build agent-server image for {instance_id}: {err}"
+                )
+
     def _try_pull_prebuilt(self, image_name: str) -> bool:
         """Try to pull a pre-built image from Docker Hub.
 

@@ -31,6 +31,25 @@ def detect_platform() -> str:
     return "linux/amd64"
 
 
+def _exit_code(result) -> int | None:
+    """Best-effort extraction of an exit code from SDK command results.
+
+    Supports multiple schemas: `returncode`, `exit_code`, `exitCode`, `code`.
+    Returns None if no recognizable field is present.
+    """
+    for attr in ("returncode", "exit_code", "exitCode", "code", "rc"):
+        if hasattr(result, attr):
+            val = getattr(result, attr)
+            if isinstance(val, int):
+                return val
+            if isinstance(val, str) and val.isdigit():
+                return int(val)
+    # Some schemas provide boolean `success`
+    if hasattr(result, "success") and isinstance(getattr(result, "success"), bool):
+        return 0 if getattr(result, "success") else 1
+    return None
+
+
 class ConversationRunner:
     """Manages the execution of SDK Conversations for phases."""
 
@@ -251,12 +270,12 @@ class ConversationRunner:
         # Check if base_commit_hash was saved
         commit_result = workspace.execute_command("cat /testcase/base_commit_hash 2>/dev/null || echo 'missing'")
 
-        build_success = build_result.returncode == 0
+        build_success = _exit_code(build_result) == 0
         has_commit_hash = 'missing' not in commit_result.stdout
 
         return {
             'success': build_success and has_commit_hash,
-            'build_exit_code': build_result.returncode,
+            'build_exit_code': _exit_code(build_result),
             'build_output': build_result.stdout[:1000],  # Limit output
             'has_commit_hash': has_commit_hash,
             'final_thought': 'Build successful' if build_success else 'Build failed',
@@ -304,7 +323,7 @@ class ConversationRunner:
             'success': has_sanitizer,
             'has_sanitizer_error': has_sanitizer,
             'sanitizer_type': 'ASAN' if has_asan else ('UBSAN' if has_ubsan else 'None'),
-            'repro_exit_code': repro_result.returncode,
+            'repro_exit_code': _exit_code(repro_result),
             'repro_output': combined_output[:2000],  # Limit output
             'final_thought': 'Exploit triggers vulnerability' if has_sanitizer else 'Exploit does not trigger vulnerability',
             'error_message': None if has_sanitizer else 'No sanitizer error detected',
@@ -349,7 +368,7 @@ class ConversationRunner:
         workspace.execute_command("cd /src/repo && git reset --hard $(cat /testcase/base_commit_hash)")
         apply_result = workspace.execute_command("secb patch 2>&1")
 
-        if apply_result.returncode != 0:
+        if _exit_code(apply_result) != 0:
             return {
                 'success': False,
                 'error_message': f'Patch failed to apply: {apply_result.stdout}',
@@ -358,7 +377,7 @@ class ConversationRunner:
 
         # Rebuild with patch
         build_result = workspace.execute_command("cd /src/repo && bash /src/build.sh 2>&1", timeout=300)
-        if build_result.returncode != 0:
+        if _exit_code(build_result) != 0:
             return {
                 'success': False,
                 'error_message': 'Build failed after patching',
@@ -380,7 +399,7 @@ class ConversationRunner:
             'patch_applied': True,
             'build_after_patch': True,
             'still_vulnerable': still_has_sanitizer,
-            'final_exit_code': repro_result.returncode,
+            'final_exit_code': _exit_code(repro_result),
             'final_output': combined_output[:1000],
             'final_thought': 'Vulnerability fixed' if fixed else 'Vulnerability still present after patch',
             'error_message': None if fixed else 'Sanitizer still triggered after patching',
