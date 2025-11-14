@@ -1,7 +1,6 @@
 # Custom SEC-Bench Base Image
 # arise-lab-security/secb.base:test
 #
-# This image is based on hwiwonlee/secb.base:20241001 upgraded to Python 3.12
 # Compatible with OpenHands SDK (requires Python 3.11+)
 #
 # Base: Google OSS-Fuzz base-builder-python
@@ -98,6 +97,9 @@ ENV PATH="/usr/local/ssl/bin:${PATH}"
 # DEVELOPMENT TOOLS AND LIBRARIES
 # ============================================================================
 
+# Add i386 architecture support for 32-bit binaries
+RUN dpkg --add-architecture i386
+
 RUN apt-get update && apt-get install -y \
     # Build essentials
     build-essential \
@@ -113,6 +115,13 @@ RUN apt-get update && apt-get install -y \
     libxml2-dev \
     libz-dev \
     libsqlite3-dev \
+    # Debugging and analysis tools
+    ltrace \
+    strace \
+    valgrind \
+    hexedit \
+    expect \
+    gdb \
     # Development utilities
     git \
     wget \
@@ -123,6 +132,7 @@ RUN apt-get update && apt-get install -y \
     unzip \
     zip \
     rsync \
+    bsdmainutils \
     && rm -rf /var/lib/apt/lists/*
 
 # ============================================================================
@@ -167,7 +177,8 @@ RUN python3 -m pip install \
 # ============================================================================
 # SEC-BENCH ENVIRONMENT VARIABLES
 # ============================================================================
-# These match the original hwiwonlee/secb.base:20241001 environment
+# TODO: These environment variables match whiwonlee's secb.base:20241001 configuration
+# TODO: Review and customize for project-specific needs
 
 ENV SRC=/src \
     WORK=/work \
@@ -198,6 +209,20 @@ ENV SANITIZER_FLAGS_address="-fsanitize=address -fsanitize-address-use-after-sco
 RUN mkdir -p /src /work /out /testcase && \
     chmod 777 /src /work /out /testcase
 
+# ============================================================================
+# SPACK COMPILER FRAMEWORK
+# ============================================================================
+# Spack allows installing multiple compiler versions for compatibility
+
+RUN git clone --depth=2 --branch=releases/v0.23 https://github.com/spack/spack.git /opt/spack && \
+    echo ". /opt/spack/share/spack/setup-env.sh" >> /etc/profile && \
+    echo "source /opt/spack/share/spack/setup-env.sh" >> ~/.bashrc
+
+ENV PATH="/opt/spack/bin:${PATH}"
+
+# Setup compilers (detect system compilers)
+RUN . /opt/spack/share/spack/setup-env.sh && spack compiler find
+
 # Set working directory
 WORKDIR /src
 
@@ -209,10 +234,11 @@ WORKDIR /src
 RUN python3 --version && \
     python3 -c "import sys; print(f'Python: {sys.version}')" && \
     python3 -m pip list | grep -E "openhands|playwright" && \
-    echo "✅ Python 3.12 configured successfully" && \
-    echo "✅ OpenHands SDK installed" && \
-    echo "✅ Sanitizers configured" && \
-    echo "✅ Base image ready"
+    echo "Python 3.12 configured successfully" && \
+    echo "OpenHands SDK installed" && \
+    echo "Sanitizers configured" && \
+    echo "Spack compiler framework ready" && \
+    echo "Base image ready"
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

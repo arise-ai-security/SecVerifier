@@ -92,38 +92,21 @@ class ConversationRunner:
         Returns:
             PhaseOutput with results
         """
-        logger.info(f"[{phase_type.value}] Executing phase...")
-
         try:
-            # Verify workspace connectivity
-            result = workspace.execute_command("pwd && ls -la /testcase 2>/dev/null || echo '/testcase not ready'")
-            logger.info(f"[{phase_type.value}] Workspace check: {result.stdout[:200]}")
-
-            # Create conversation with the SHARED workspace
             conversation = Conversation(
                 agent=agent,
                 workspace=workspace,
             )
 
-            # CRITICAL: Send system prompt as first message
-            # SDK doesn't support system prompts in Agent constructor,
-            # so we send it as the first user message with a marker
-            logger.info(f"[{phase_type.value}] Sending system prompt...")
+            # Send system prompt as first user message (SDK doesn't support system prompts in Agent constructor)
             conversation.send_message(
                 f"<SYSTEM_INSTRUCTIONS>\n{system_prompt}\n</SYSTEM_INSTRUCTIONS>"
             )
 
-            # Send task instruction
-            logger.info(f"[{phase_type.value}] Sending task instruction...")
             conversation.send_message(task_instruction)
 
-            # Run until completion
-            # The SDK's run() method blocks until agent finishes
-            logger.info(f"[{phase_type.value}] Starting agent execution...")
             conversation.run()
-            logger.info(f"[{phase_type.value}] Agent execution completed")
 
-            # Extract results from conversation
             return self._extract_results(conversation, phase_type, workspace, instance_data)
 
         except TimeoutError as e:
@@ -169,21 +152,13 @@ class ConversationRunner:
         Returns:
             PhaseOutput with extracted results
         """
-        logger.info(f"[{phase_type.value}] Extracting results...")
-
         try:
-            # Check phase-specific success criteria
             outputs = self._check_phase_outputs(phase_type, workspace, instance_data)
-
-            # Collect artifacts
             artifacts = self._collect_artifacts(phase_type, workspace)
 
-            # Determine overall success
             success = outputs.get('success', False)
             final_thought = outputs.get('final_thought', f'{phase_type.value} completed')
             error_message = outputs.get('error_message')
-
-            logger.info(f"[{phase_type.value}] Success: {success}")
 
             return PhaseOutput(
                 phase_type=phase_type,
@@ -249,9 +224,6 @@ class ConversationRunner:
         Returns:
             Validation results
         """
-        logger.info("[Builder] Validating phase...")
-
-        # Check if build.sh exists
         result = workspace.execute_command("test -f /src/build.sh && echo 'exists' || echo 'missing'")
         if 'missing' in result.stdout:
             return {
@@ -260,14 +232,11 @@ class ConversationRunner:
                 'final_thought': 'BuilderAgent failed to create build script',
             }
 
-        # Try to build the project
-        logger.info("[Builder] Running build test...")
         build_result = workspace.execute_command(
             "cd /src/repo && bash /src/build.sh 2>&1",
-            timeout=300,  # 5 minute timeout
+            timeout=300,
         )
 
-        # Check if base_commit_hash was saved
         commit_result = workspace.execute_command("cat /testcase/base_commit_hash 2>/dev/null || echo 'missing'")
 
         build_success = _exit_code(build_result) == 0
@@ -295,9 +264,6 @@ class ConversationRunner:
         Returns:
             Validation results
         """
-        logger.info("[Exploiter] Validating phase...")
-
-        # Check if secb script was updated
         secb_content_result = workspace.execute_command("cat /usr/local/bin/secb")
         if 'ERROR: repro() function not implemented' in secb_content_result.stdout:
             return {
@@ -306,11 +272,9 @@ class ConversationRunner:
                 'final_thought': 'Exploit not implemented',
             }
 
-        # Run the exploit
-        logger.info("[Exploiter] Running exploit test...")
         repro_result = workspace.execute_command(
             "secb repro 2>&1",
-            timeout=60,  # 1 minute timeout
+            timeout=60,
         )
 
         # Check for sanitizer output
@@ -343,9 +307,6 @@ class ConversationRunner:
         Returns:
             Validation results
         """
-        logger.info("[Fixer] Validating phase...")
-
-        # Check if patch exists
         patch_check = workspace.execute_command("test -f /testcase/model_patch.diff && echo 'exists' || echo 'missing'")
         if 'missing' in patch_check.stdout:
             return {
@@ -354,7 +315,6 @@ class ConversationRunner:
                 'final_thought': 'FixerAgent did not create patch',
             }
 
-        # Check patch content
         patch_content = workspace.execute_command("cat /testcase/model_patch.diff")
         if not patch_content.stdout.strip():
             return {
@@ -363,8 +323,6 @@ class ConversationRunner:
                 'final_thought': 'Empty patch file',
             }
 
-        # Apply patch and rebuild
-        logger.info("[Fixer] Applying patch and rebuilding...")
         workspace.execute_command("cd /src/repo && git reset --hard $(cat /testcase/base_commit_hash)")
         apply_result = workspace.execute_command("secb patch 2>&1")
 
@@ -375,7 +333,6 @@ class ConversationRunner:
                 'final_thought': 'Patch application failed',
             }
 
-        # Rebuild with patch
         build_result = workspace.execute_command("cd /src/repo && bash /src/build.sh 2>&1", timeout=300)
         if _exit_code(build_result) != 0:
             return {
@@ -384,8 +341,6 @@ class ConversationRunner:
                 'final_thought': 'Patched code does not build',
             }
 
-        # Run exploit again - should NOT trigger sanitizer
-        logger.info("[Fixer] Testing if patch fixes vulnerability...")
         repro_result = workspace.execute_command("secb repro 2>&1", timeout=60)
 
         combined_output = repro_result.stdout + repro_result.stderr
@@ -472,9 +427,7 @@ class ConversationRunner:
                     if result.stdout.strip():
                         artifacts[file_path] = result.stdout
 
-            logger.info(f"[{phase_type.value}] Collected {len(artifacts)} artifacts")
-
         except Exception as e:
-            logger.warning(f"[{phase_type.value}] Failed to collect some artifacts: {e}")
+            logger.warning(f"[{phase_type.value}] Failed to collect artifacts: {e}")
 
         return artifacts

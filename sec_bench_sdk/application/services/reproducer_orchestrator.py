@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
+import jinja2
+
 if TYPE_CHECKING:
     from openhands.workspace import DockerWorkspace
 
@@ -93,15 +95,9 @@ class ReproducerOrchestrator:
         output = ReproducerOutput(instance_id=input_data.instance_id)
 
         try:
-            # Get instance-specific Docker image (builds if necessary)
-            logger.info(f"[{input_data.instance_id}] Getting Docker image...")
             instance_image = self.docker_manager.get_instance_image(input_data.metadata)
-            logger.info(f"[{input_data.instance_id}] Using image: {instance_image}")
 
-            # Create ONE workspace for all phases
-            # This is CRITICAL - state must persist across phases
-            logger.info(f"[{input_data.instance_id}] Creating Docker workspace...")
-            # Build a lightweight agent-server image on top of the instance image
+            # Create ONE workspace for all phases - state must persist
             agent_server_image = self.docker_manager.ensure_agent_server_image(
                 base_image=instance_image,
                 instance_id=input_data.instance_id,
@@ -112,15 +108,8 @@ class ReproducerOrchestrator:
                 extra_ports=self.extra_ports,
                 platform=detect_platform(),
             ) as workspace:
-                logger.info(f"[{input_data.instance_id}] Workspace created successfully")
-
-                # Initialize workspace (clone repo, setup directories)
-                logger.info(f"[{input_data.instance_id}] Initializing workspace...")
                 self._setup_workspace(workspace, input_data)
-                logger.info(f"[{input_data.instance_id}] Workspace initialized")
 
-                # Phase 1: Builder
-                logger.info(f"[{input_data.instance_id}] Starting Builder phase...")
                 builder_output = await self._execute_phase_with_retry(
                     AgentType.BUILDER,
                     input_data,
@@ -134,10 +123,6 @@ class ReproducerOrchestrator:
                     output.error_message = f"Builder phase failed: {builder_output.error_message}"
                     return output
 
-                logger.info(f"[{input_data.instance_id}] Builder phase completed successfully")
-
-                # Phase 2: Exploiter
-                logger.info(f"[{input_data.instance_id}] Starting Exploiter phase...")
                 exploiter_output = await self._execute_phase_with_retry(
                     AgentType.EXPLOITER,
                     input_data,
@@ -151,10 +136,6 @@ class ReproducerOrchestrator:
                     output.error_message = f"Exploiter phase failed: {exploiter_output.error_message}"
                     return output
 
-                logger.info(f"[{input_data.instance_id}] Exploiter phase completed successfully")
-
-                # Phase 3: Fixer
-                logger.info(f"[{input_data.instance_id}] Starting Fixer phase...")
                 fixer_output = await self._execute_phase_with_retry(
                     AgentType.FIXER,
                     input_data,
@@ -168,11 +149,7 @@ class ReproducerOrchestrator:
                     output.error_message = f"Fixer phase failed: {fixer_output.error_message}"
                     return output
 
-                logger.info(f"[{input_data.instance_id}] Fixer phase completed successfully")
-
-                # All phases succeeded
                 output.success = True
-                logger.info(f"[{input_data.instance_id}] All phases completed successfully!")
                 return output
 
         except Exception as e:
@@ -252,21 +229,16 @@ version = "{version}"
             input_data: Input data with repo URL, commit, etc.
         """
         try:
-            logger.info("Setting up workspace directories...")
-
-            # Create /testcase directory for exploits and artifacts
             workspace.execute_command("mkdir -p /testcase && chmod 777 /testcase")
 
-            # Clone repository to /src/repo
             repo_url = input_data.repository_url
             base_commit = input_data.base_commit
 
-            logger.info(f"Cloning repository: {repo_url}")
             clone_result = workspace.execute_command(
                 f"git clone --depth 1 {repo_url} /src/repo || git clone {repo_url} /src/repo"
             )
 
-            # Handle different SDK result schemas (exit_code vs returncode)
+            # Handle different SDK result schemas
             clone_rc = getattr(clone_result, 'returncode', None)
             if clone_rc is None:
                 clone_rc = getattr(clone_result, 'exit_code', None)
@@ -274,27 +246,19 @@ version = "{version}"
                 clone_rc = int(clone_rc)
 
             if clone_rc not in (0, None):
-                logger.warning(f"Clone failed with shallow history, trying full clone...")
+                logger.warning(f"Clone failed with shallow history, retrying full clone")
                 workspace.execute_command(f"git clone {repo_url} /src/repo")
 
-            # Checkout base commit
-            logger.info(f"Checking out base commit: {base_commit}")
             workspace.execute_command(f"cd /src/repo && git checkout {base_commit}")
 
-            # Write initial build.sh if provided in metadata
             if 'build_sh' in input_data.metadata:
-                logger.info("Writing initial build script...")
                 build_sh_content = input_data.metadata['build_sh']
-                # Write to a temporary file and then move it
                 workspace.execute_command(
                     f"cat > /src/build.sh << 'EOFBUILDSH'\n{build_sh_content}\nEOFBUILDSH"
                 )
                 workspace.execute_command("chmod +x /src/build.sh")
 
-            # Write secb utility script (used by agents)
             self._write_secb_script(workspace, input_data)
-
-            logger.info("Workspace setup completed successfully")
 
         except Exception as e:
             logger.error(f"Failed to setup workspace: {e}")
@@ -304,60 +268,27 @@ version = "{version}"
         """Write the secb utility script used by agents.
 
         This script provides commands like 'secb build', 'secb repro', 'secb patch'.
+        Loads from template to ensure consistency with the original implementation.
 
         Args:
             workspace: The Docker workspace
             input_data: Input data
         """
-        secb_script = '''#!/bin/bash
-# SEC-Bench utility script for building, reproducing, and patching
+        # Load template from infrastructure/scripts
+        template_path = Path(__file__).parent.parent.parent / "infrastructure" / "scripts" / "secb_helper.sh.j2"
 
-build() {
-    echo "[secb] Building project..."
-    cd /src/repo
-    if [ -f /src/build.sh ]; then
-        bash /src/build.sh
-    else
-        echo "[secb] ERROR: /src/build.sh not found"
-        return 1
-    fi
-}
+        if not template_path.exists():
+            raise FileNotFoundError(f"secb template not found at {template_path}")
 
-repro() {
-    echo "[secb] Running exploit to reproduce vulnerability..."
-    # This function will be filled by ExploiterAgent
-    echo "[secb] ERROR: repro() function not implemented yet"
-    return 1
-}
+        template = jinja2.Template(template_path.read_text())
 
-patch() {
-    echo "[secb] Applying patch..."
-    cd /src/repo
-    if [ -f /testcase/model_patch.diff ]; then
-        git apply /testcase/model_patch.diff
-        echo "[secb] Patch applied successfully"
-    else
-        echo "[secb] ERROR: /testcase/model_patch.diff not found"
-        return 1
-    fi
-}
+        # Render with actual values
+        secb_script = template.render(
+            instance_id=input_data.instance_id,
+            script_name="secb",
+            work_dir=input_data.metadata.get('work_dir', '/src/repo')
+        )
 
-case "$1" in
-    build)
-        build
-        ;;
-    repro)
-        repro
-        ;;
-    patch)
-        patch
-        ;;
-    *)
-        echo "Usage: secb {build|repro|patch}"
-        exit 1
-        ;;
-esac
-'''
         workspace.execute_command(f"cat > /usr/local/bin/secb << 'EOFSECB'\n{secb_script}\nEOFSECB")
         workspace.execute_command("chmod +x /usr/local/bin/secb")
 
