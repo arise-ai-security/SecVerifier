@@ -19,6 +19,7 @@ from sec_bench_sdk.application.dto.phase_data import (
     ReproducerOutput,
 )
 from sec_bench_sdk.application.services.phase_executor import PhaseExecutor
+from sec_bench_sdk.application.services.run_logger import InstanceRunContext
 from sec_bench_sdk.domain.value_objects import AgentType, DELEGATION_SEQUENCE, PhaseConfig
 from sec_bench_sdk.infrastructure.sdk.docker_manager import InstanceDockerManager
 from sec_bench_sdk.infrastructure.sdk.llm_factory import LLMFactory, LLMConfig
@@ -69,7 +70,11 @@ class ReproducerOrchestrator:
             auto_build=True,
         )
 
-    async def execute(self, input_data: ReproducerInput) -> ReproducerOutput:
+    async def execute(
+        self,
+        input_data: ReproducerInput,
+        run_context: InstanceRunContext | None = None,
+    ) -> ReproducerOutput:
         """Execute the complete 3-phase workflow.
 
         CRITICAL: Uses a SINGLE DockerWorkspace for all phases to maintain state.
@@ -115,6 +120,7 @@ class ReproducerOrchestrator:
                     input_data,
                     workspace,
                     previous_output=None,
+                    run_context=run_context,
                 )
                 output.builder_output = builder_output
 
@@ -128,6 +134,7 @@ class ReproducerOrchestrator:
                     input_data,
                     workspace,
                     previous_output=builder_output,
+                    run_context=run_context,
                 )
                 output.exploiter_output = exploiter_output
 
@@ -141,6 +148,7 @@ class ReproducerOrchestrator:
                     input_data,
                     workspace,
                     previous_output=exploiter_output,
+                    run_context=run_context,
                 )
                 output.fixer_output = fixer_output
 
@@ -298,6 +306,7 @@ version = "{version}"
         input_data: ReproducerInput,
         workspace: 'DockerWorkspace',
         previous_output: Optional[PhaseOutput],
+        run_context: InstanceRunContext | None,
     ) -> PhaseOutput:
         """Execute a phase with retry logic.
 
@@ -327,6 +336,7 @@ version = "{version}"
                 phase_input,
                 self.llm_config,
                 workspace,
+                run_context,
             )
 
             # Check if successful

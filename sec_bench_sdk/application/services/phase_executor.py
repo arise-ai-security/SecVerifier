@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 from sec_bench_sdk.application.dto.phase_data import PhaseInput, PhaseOutput
 from sec_bench_sdk.domain.value_objects import AgentType, PhaseConfig
+from sec_bench_sdk.application.services.run_logger import InstanceRunContext
 from sec_bench_sdk.infrastructure.sdk.agent_builder import AgentBuilder
 from sec_bench_sdk.infrastructure.sdk.conversation_runner import ConversationRunner
 from sec_bench_sdk.infrastructure.sdk.llm_factory import LLMFactory, LLMConfig
@@ -37,6 +38,7 @@ class PhaseExecutor:
         phase_input: PhaseInput,
         llm_config: LLMConfig,
         workspace: DockerWorkspace,
+        run_context: InstanceRunContext | None,
     ) -> PhaseOutput:
         """Execute a phase.
 
@@ -82,6 +84,7 @@ class PhaseExecutor:
             workspace=workspace,
             phase_type=phase_input.phase_type,
             instance_data=phase_input.metadata,
+            run_context=run_context,
         )
 
         return output

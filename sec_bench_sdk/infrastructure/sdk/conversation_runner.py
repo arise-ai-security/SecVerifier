@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from openhands.workspace import DockerWorkspace
 
 from sec_bench_sdk.application.dto.phase_data import PhaseOutput
+from sec_bench_sdk.application.services.run_logger import InstanceRunContext
 from sec_bench_sdk.domain.value_objects import AgentType
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,7 @@ class ConversationRunner:
         workspace: 'DockerWorkspace',
         phase_type: AgentType,
         instance_data: dict,
+        run_context: InstanceRunContext | None = None,
     ) -> PhaseOutput:
         """Execute a phase using SDK Conversation.
 
@@ -92,6 +94,7 @@ class ConversationRunner:
         Returns:
             PhaseOutput with results
         """
+        conversation: Conversation | None = None
         try:
             conversation = Conversation(
                 agent=agent,
@@ -131,6 +134,9 @@ class ConversationRunner:
                 artifacts={},
                 error_message=f"{str(e)}\n{error_details}",
             )
+        finally:
+            if run_context and conversation is not None:
+                self._log_conversation_events(run_context, phase_type, conversation)
 
     def _extract_results(
         self,
@@ -431,3 +437,21 @@ class ConversationRunner:
             logger.warning(f"[{phase_type.value}] Failed to collect artifacts: {e}")
 
         return artifacts
+
+    def _log_conversation_events(
+        self,
+        run_context: InstanceRunContext,
+        phase_type: AgentType,
+        conversation: Conversation,
+    ) -> None:
+        """Safely serialize and record conversation events to the run context."""
+        try:
+            events = [event.model_dump(mode='json') for event in conversation.state.events]
+            if events:
+                run_context.record_phase_events(phase_type, events)
+        except Exception as exc:
+            logger.debug(
+                "[%s] Unable to serialize conversation events for logging: %s",
+                phase_type.value,
+                exc,
+            )
