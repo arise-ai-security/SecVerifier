@@ -1,0 +1,17 @@
+{
+  "agent_class": "MultiAgent",
+  "model": "openai/gpt-5",
+  "dataset": "SongTonyLi/CVE_Instances",
+  "split": "cve",
+  "condenser": "recent",
+  "max_iterations": 50,
+  "command": "main.py --instance-id wasm3.cve-2022-28966 --model openai/gpt-5 --dataset SongTonyLi/CVE_Instances --split cve",
+  "log_root": "output/SongTonyLi/CVE_Instances/MultiAgent/gpt-5_maxiter_50_N_condenser=recent",
+  "updated_at": "2025-11-18T02:47:07.365614Z",
+  "processed_instances": [
+    "wasm3.cve-2022-28966"
+  ],
+  "instance_option": "wasm3.cve-2022-28966",
+  "limit_option": null,
+  "invocation_size": 1
+}
