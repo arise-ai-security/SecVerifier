@@ -28,7 +28,8 @@ os.environ.setdefault('SDK_REF', 'main')
 # OpenHands expects to run from its own repo with specific pyproject.toml structure
 import sys
 from pathlib import Path as _Path
-_fake_sdk_root = _Path('/tmp/openhands_sdk_fake_root')
+import time
+_fake_sdk_root = _Path(f'/tmp/openhands_sdk_fake_root_{int(time.time())}')
 _fake_sdk_root.mkdir(exist_ok=True)
 
 _pyproject = _fake_sdk_root / 'pyproject.toml'
