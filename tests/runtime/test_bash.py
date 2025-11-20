@@ -33,9 +33,9 @@ def test_bash_command_env(temp_dir, runtime_cls, run_as_openhands):
     runtime, config = _load_runtime(temp_dir, runtime_cls, run_as_openhands)
     try:
         obs = runtime.run_action(CmdRunAction(command='env'))
-        assert isinstance(
-            obs, CmdOutputObservation
-        ), 'The observation should be a CmdOutputObservation.'
+        assert isinstance(obs, CmdOutputObservation), (
+            'The observation should be a CmdOutputObservation.'
+        )
         assert obs.exit_code == 0, 'The exit code should be 0.'
     finally:
         _close_test_runtime(runtime)
@@ -553,9 +553,9 @@ def test_python_version(temp_dir, runtime_cls, run_as_openhands):
     try:
         obs = runtime.run_action(CmdRunAction(command='python --version'))
 
-        assert isinstance(
-            obs, CmdOutputObservation
-        ), 'The observation should be a CmdOutputObservation.'
+        assert isinstance(obs, CmdOutputObservation), (
+            'The observation should be a CmdOutputObservation.'
+        )
         assert obs.exit_code == 0, 'The exit code should be 0.'
         assert 'Python 3' in obs.content, 'The output should contain "Python 3".'
     finally:

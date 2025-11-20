@@ -1,0 +1,1 @@
+import{u as e}from"./open-hands-axios-DmXtiBSx.js";import{O as o}from"./open-hands--YlJ3f3i.js";const i=()=>e({queryKey:["config"],queryFn:o.getConfig,staleTime:1e3*60*5,gcTime:1e3*60*15});export{i as u};

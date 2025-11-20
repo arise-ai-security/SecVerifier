@@ -1,0 +1,1 @@
+import{r as t,o as u}from"./chunk-BAXFHI7N-C1aCn8M0.js";var o=t.createContext(void 0),s=r=>{const e=t.useContext(o);if(r)return r;if(!e)throw new Error("No QueryClient set, use QueryClientProvider to set one");return e},a=({client:r,children:e})=>(t.useEffect(()=>(r.mount(),()=>{r.unmount()}),[r]),u.jsx(o.Provider,{value:r,children:e}));export{a as Q,s as u};

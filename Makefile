@@ -177,7 +177,7 @@ install-frontend-dependencies:
 	@echo "$(YELLOW)Detect Node.js version...$(RESET)"
 	@cd frontend && node ./scripts/detect-node-version.js
 	echo "$(BLUE)Installing frontend dependencies with npm...$(RESET)"
-	@cd frontend && npm install
+	@cd frontend && npm install --ignore-scripts
 	@echo "$(GREEN)Frontend dependencies installed successfully.$(RESET)"
 
 install-pre-commit-hooks:

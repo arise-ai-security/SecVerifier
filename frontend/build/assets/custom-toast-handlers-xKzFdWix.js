@@ -1,0 +1,1 @@
+import{V as s}from"./index-CO93yzRA.js";const t={background:"#454545",border:"1px solid #717888",color:"#fff",borderRadius:"4px"},r={position:"top-right",style:t},c=o=>{s.error(o,r)},d=o=>{s.success(o,r)};export{d as a,c as d};

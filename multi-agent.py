@@ -46,6 +46,7 @@ from openhands.core.config import (
     AppConfig,
     SandboxConfig,
     get_llm_config_arg,
+    load_app_config,
 )
 from openhands.core.config.condenser_config import (
     CondenserConfig,
@@ -1584,6 +1585,12 @@ def main(
 
     # Select and configure LLM based on argument
     llm_config = get_llm_config_arg(llm_config_arg)
+    if llm_config is None:
+        oh_cfg = load_app_config(config_file='config.toml')
+        llm_config = oh_cfg.get_llm_config()
+        logger.info(
+            f"LLM config '{llm_config_arg}' not found in config.toml. Using default [llm] config instead."
+        )
     assert llm_config is not None
     llm_config.log_completions = True
 

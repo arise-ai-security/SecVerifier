@@ -455,7 +455,7 @@ def cli_confirm(question: str = 'Are you sure?', choices: Optional[List[str]] = 
         ] + [
             (
                 'class:selected' if i == selected[0] else 'class:unselected',
-                f"{'> ' if i == selected[0] else '  '}{choice}\n",
+                f'{"> " if i == selected[0] else "  "}{choice}\n',
             )
             for i, choice in enumerate(choices)
         ]

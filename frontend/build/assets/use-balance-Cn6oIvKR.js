@@ -1,0 +1,1 @@
+import{u as a}from"./open-hands-axios-DmXtiBSx.js";import{u as r}from"./use-config-D8tLtqcY.js";import{O as s}from"./open-hands--YlJ3f3i.js";const o=()=>{const{data:e}=r();return a({queryKey:["user","balance"],queryFn:s.getBalance,enabled:(e==null?void 0:e.APP_MODE)==="saas"&&(e==null?void 0:e.FEATURE_FLAGS.ENABLE_BILLING)})};export{o as u};
