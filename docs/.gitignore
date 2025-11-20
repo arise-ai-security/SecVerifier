@@ -9,6 +9,9 @@
 .docusaurus
 .cache-loader
 
+# API Keys
+config.toml
+
 # Misc
 .DS_Store
 .env.local
