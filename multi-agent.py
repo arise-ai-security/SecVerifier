@@ -43,7 +43,7 @@ from openhands.controller.agent import Agent
 from openhands.controller.state.state import State
 from openhands.core.config import (
     AgentConfig,
-    # AppConfig,
+    OpenHandsConfig as AppConfig,
     SandboxConfig,
     get_llm_config_arg,
     load_openhands_config,
@@ -742,10 +742,10 @@ def process_instance(
     try:
         # Initialize runtime to avoid UnboundLocalError
 
-        # Configure the LLM
-        llm_config = get_llm_config_arg(llm_config_arg)
+        # Configure the LLM - use the config from metadata which already has fallback applied
+        llm_config = metadata.llm_config
         if llm_config is None:
-            raise EvalException(f"Could not load LLM config from '{llm_config_arg}'")
+            raise EvalException(f"Could not load LLM config from metadata")
 
         llm_config.log_completions = True
         llm_config.log_completions_folder = completions_dir

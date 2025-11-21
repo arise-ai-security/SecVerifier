@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
 
 import openhands.agenthub  # noqa F401 (we import this to get the agents registered)
 import openhands.cli.suppress_warnings  # noqa: F401
@@ -14,7 +14,7 @@ from openhands.core.config import (
     parse_arguments,
     setup_config_from_args,
 )
-from openhands.core.config.mcp_config import OpenHandsMCPConfigImpl
+from openhands.core.config.mcp_config import MCPConfig, OpenHandsMCPConfigImpl
 from openhands.core.logger import openhands_logger as logger
 from openhands.core.loop import run_agent_until_done
 from openhands.core.schema import AgentState
@@ -34,17 +34,23 @@ from openhands.events.event import Event
 from openhands.events.observation import AgentStateChangedObservation
 from openhands.io import read_input, read_task
 
+if TYPE_CHECKING:
+    from openhands.memory.memory import Memory
+    from openhands.runtime.base import Runtime
+
 # Make MCP optional to avoid dependency conflicts
 try:
     from openhands.mcp import add_mcp_tools_to_agent
 except ImportError:
     logger.warning('MCP module not available, MCP functionality will be disabled')
 
-    async def add_mcp_tools_to_agent(agent, runtime, memory):
+    async def add_mcp_tools_to_agent(
+        agent: Agent, runtime: 'Runtime', memory: 'Memory'
+    ) -> MCPConfig:
         """Stub function when MCP is not available."""
         logger.debug('MCP not available, skipping MCP tools')
         agent.set_mcp_tools([])
-        return None
+        return MCPConfig()
 
 
 from openhands.memory.memory import Memory
@@ -247,7 +253,7 @@ async def run_controller(
             file_path = config.save_trajectory_path
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         histories = controller.get_trajectory(config.save_screenshots_in_trajectory)
-        with open(file_path, 'w') as f:  # noqa: ASYNC101
+        with open(file_path, 'w') as f:  # noqa: ASYNC230
             json.dump(histories, f, indent=4)
 
     return state

@@ -42,5 +42,5 @@ async def run_agent_until_done(
     controller.status_callback = status_callback
     memory.status_callback = status_callback
 
-    while controller.state.agent_state not in end_states:
+    while controller.state.agent_state not in end_states:  # noqa: ASYNC110
         await asyncio.sleep(1)

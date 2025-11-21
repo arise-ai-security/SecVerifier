@@ -672,7 +672,7 @@ async def main_with_loop(loop: asyncio.AbstractEventLoop, args) -> None:
     if args.file:
         # For CLI usage, we want to enhance the file content with a prompt
         # that instructs the agent to read and understand the file first
-        with open(args.file, 'r', encoding='utf-8') as file:
+        with open(args.file, 'r', encoding='utf-8') as file:  # noqa: ASYNC230
             file_content = file.read()
 
         # Create a prompt that instructs the agent to read and understand the file first
