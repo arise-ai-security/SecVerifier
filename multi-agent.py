@@ -722,7 +722,7 @@ def process_instance(
         metadata.details.get('max_budget_per_task', 1.0) if metadata.details else 1.0
     )
 
-    runtime_container_image = f'secb-instance:{instance_id}'
+    runtime_container_image = f'hwiwonlee/secb.x86_64.{instance_id}:v0.4'
 
     logger.info(f'Processing instance: {instance_id} using run_controller')
     logger.info(f'Using runtime container image: {runtime_container_image}')
