@@ -23,6 +23,10 @@ from openhands.core.config.config_utils import (
 )
 from openhands.core.config.extended_config import ExtendedConfig
 from openhands.core.config.llm_config import LLMConfig
+
+from openhands.core.config.openhands_config import OpenHandsConfig
+from openhands.utils.import_utils import get_impl
+
 from openhands.core.config.mcp_config import MCPConfig
 from openhands.core.config.sandbox_config import SandboxConfig
 from openhands.core.config.security_config import SecurityConfig
@@ -587,6 +591,48 @@ def load_app_config(
         logger.DISABLE_COLOR_PRINTING = config.disable_color
     return config
 
+
+def register_custom_agents(config: OpenHandsConfig) -> None:
+    """Register custom agents from configuration.
+
+    This function is called after configuration is loaded to ensure all custom agents
+    specified in the config are properly imported and registered.
+    """
+    # Import here to avoid circular dependency
+    from openhands.controller.agent import Agent
+
+    for agent_name, agent_config in config.agents.items():
+        if agent_config.classpath:
+            try:
+                agent_cls = get_impl(Agent, agent_config.classpath)
+                Agent.register(agent_name, agent_cls)
+                logger.openhands_logger.info(
+                    f"Registered custom agent '{agent_name}' from {agent_config.classpath}"
+                )
+            except Exception as e:
+                logger.openhands_logger.error(
+                    f"Failed to register agent '{agent_name}': {e}"
+                )
+
+
+def load_openhands_config(
+    set_logging_levels: bool = True, config_file: str = 'config.toml'
+) -> OpenHandsConfig:
+    """Load the configuration from the specified config file and environment variables.
+
+    Args:
+        set_logging_levels: Whether to set the global variables for logging levels.
+        config_file: Path to the config file. Defaults to 'config.toml' in the current directory.
+    """
+    config = OpenHandsConfig()
+    load_from_toml(config, config_file)
+    load_from_env(config, os.environ)
+    finalize_config(config)
+    register_custom_agents(config)
+    if set_logging_levels:
+        logger.DEBUG = config.debug
+        logger.DISABLE_COLOR_PRINTING = config.disable_color
+    return config
 
 def setup_config_from_args(args: argparse.Namespace) -> AppConfig:
     """Load config from toml and override with command line arguments.
