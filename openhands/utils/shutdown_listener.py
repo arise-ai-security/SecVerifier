@@ -80,7 +80,7 @@ async def async_sleep_if_should_continue(timeout: float) -> None:
         await asyncio.sleep(timeout)
         return
     start_time = time.time()
-    while time.time() - start_time < timeout and should_continue():  # noqa: ASYNC110
+    while time.time() - start_time < timeout and should_continue():
         await asyncio.sleep(1)
 
 

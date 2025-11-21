@@ -1,7 +1,7 @@
 import asyncio
 from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Coroutine, Iterable, List
+from typing import Callable, Coroutine, Iterable
 
 GENERAL_TIMEOUT: int = 15
 EXECUTOR = ThreadPoolExecutor()
@@ -64,7 +64,7 @@ async def call_coro_in_bg_thread(
 
 async def wait_all(
     iterable: Iterable[Coroutine], timeout: int = GENERAL_TIMEOUT
-) -> List:
+) -> list:
     """
     Shorthand for waiting for all the coroutines in the iterable given in parallel. Creates
     a task for each coroutine.
@@ -99,3 +99,25 @@ class AsyncException(Exception):
 
     def __str__(self):
         return '\n'.join(str(e) for e in self.exceptions)
+
+
+async def run_in_loop(
+    coro: Coroutine, loop: asyncio.AbstractEventLoop, timeout: float = GENERAL_TIMEOUT
+):
+    """
+    Mitigate the dreaded "coroutine was created in a different event loop" error.
+    Pass the coroutine to a different event loop if needed.
+    """
+    running_loop = asyncio.get_running_loop()
+    if running_loop == loop:
+        result = await coro
+        return result
+
+    result = await call_sync_from_async(_run_in_loop, coro, loop, timeout)
+    return result
+
+
+def _run_in_loop(coro: Coroutine, loop: asyncio.AbstractEventLoop, timeout: float):
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    result = future.result(timeout=timeout)
+    return result

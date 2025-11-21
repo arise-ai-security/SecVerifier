@@ -5,15 +5,15 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from openhands.core import logger
 from openhands.core.config.agent_config import AgentConfig
-# from openhands.core.config.cli_config import CLIConfig
+from openhands.core.config.cli_config import CLIConfig
 from openhands.core.config.config_utils import (
-    # DEFAULT_WORKSPACE_MOUNT_PATH_IN_SANDBOX,
+    DEFAULT_WORKSPACE_MOUNT_PATH_IN_SANDBOX,
     OH_DEFAULT_AGENT,
     OH_MAX_ITERATIONS,
     model_defaults_to_dict,
 )
 from openhands.core.config.extended_config import ExtendedConfig
-# from openhands.core.config.kubernetes_config import KubernetesConfig
+from openhands.core.config.kubernetes_config import KubernetesConfig
 from openhands.core.config.llm_config import LLMConfig
 from openhands.core.config.mcp_config import MCPConfig
 from openhands.core.config.sandbox_config import SandboxConfig
@@ -83,9 +83,9 @@ class OpenHandsConfig(BaseModel):
     )
 
     workspace_base: str | None = Field(default=None)
-    # workspace_mount_path_in_sandbox: str = Field(
-    #     default=DEFAULT_WORKSPACE_MOUNT_PATH_IN_SANDBOX
-    # )
+    workspace_mount_path_in_sandbox: str = Field(
+        default=DEFAULT_WORKSPACE_MOUNT_PATH_IN_SANDBOX
+    )
 
     # Deprecated parameters - will be removed in a future version
     workspace_mount_path: str | None = Field(default=None, deprecated=True)
@@ -113,8 +113,8 @@ class OpenHandsConfig(BaseModel):
     )  # Maximum number of concurrent agent loops allowed per user
     mcp_host: str = Field(default=f'localhost:{os.getenv("port", 3000)}')
     mcp: MCPConfig = Field(default_factory=MCPConfig)
-    # kubernetes: KubernetesConfig = Field(default_factory=KubernetesConfig)
-    # cli: CLIConfig = Field(default_factory=CLIConfig)
+    kubernetes: KubernetesConfig = Field(default_factory=KubernetesConfig)
+    cli: CLIConfig = Field(default_factory=CLIConfig)
     git_user_name: str = Field(
         default='openhands', description='Git user name for commits made by the agent'
     )

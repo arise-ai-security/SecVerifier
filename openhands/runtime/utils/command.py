@@ -1,4 +1,4 @@
-from openhands.core.config import AppConfig
+from openhands.core.config import OpenHandsConfig
 from openhands.runtime.plugins import PluginRequirement
 
 DEFAULT_PYTHON_PREFIX = [
@@ -9,15 +9,18 @@ DEFAULT_PYTHON_PREFIX = [
     'poetry',
     'run',
 ]
+DEFAULT_MAIN_MODULE = 'openhands.runtime.action_execution_server'
 
 
 def get_action_execution_server_startup_command(
     server_port: int,
     plugins: list[PluginRequirement],
-    app_config: AppConfig,
+    app_config: OpenHandsConfig,
     python_prefix: list[str] = DEFAULT_PYTHON_PREFIX,
     override_user_id: int | None = None,
     override_username: str | None = None,
+    main_module: str = DEFAULT_MAIN_MODULE,
+    python_executable: str = 'python',
 ) -> list[str]:
     sandbox_config = app_config.sandbox
 
@@ -42,10 +45,10 @@ def get_action_execution_server_startup_command(
 
     base_cmd = [
         *python_prefix,
-        'python',
+        python_executable,
         '-u',
         '-m',
-        'openhands.runtime.action_execution_server',
+        main_module,
         str(server_port),
         '--working-dir',
         app_config.workspace_mount_path_in_sandbox,
@@ -54,7 +57,14 @@ def get_action_execution_server_startup_command(
         username,
         '--user-id',
         str(user_id),
+        '--git-user-name',
+        app_config.git_user_name,
+        '--git-user-email',
+        app_config.git_user_email,
         *browsergym_args,
     ]
+
+    if not app_config.enable_browser:
+        base_cmd.append('--no-enable-browser')
 
     return base_cmd
