@@ -113,6 +113,46 @@ ENV_VARS_TO_COLLECT = [
 DELEGATION_SEQUENCE = ['BuilderAgent', 'ExploiterAgent', 'FixerAgent']
 
 
+def get_latest_docker_tag(instance_id: str) -> str:
+    """Query Docker Hub for available tags and return the most recent one.
+
+    Args:
+        instance_id: The vulnerability instance ID (e.g., 'faad2.cve-2021-32273')
+
+    Returns:
+        The full image name with the most recent tag
+    """
+    repo_name = f'hwiwonlee/secb.eval.x86_64.{instance_id}'
+    url = f'https://hub.docker.com/v2/repositories/{repo_name}/tags?page_size=100'
+
+    try:
+        response = httpx.get(url, timeout=30)
+        if response.status_code == 404:
+            logger.warning(f'Repository {repo_name} not found on Docker Hub')
+            return f'{repo_name}:latest'  # Fallback to latest
+
+        response.raise_for_status()
+        data = response.json()
+
+        if 'results' not in data or len(data['results']) == 0:
+            logger.warning(f'No tags found for {repo_name}')
+            return f'{repo_name}:latest'
+
+        # Sort by last_updated and get the most recent
+        tags = sorted(
+            data['results'],
+            key=lambda x: x.get('last_updated', ''),
+            reverse=True
+        )
+        most_recent_tag = tags[0]['name']
+        logger.info(f'Found most recent tag for {instance_id}: {most_recent_tag}')
+        return f'{repo_name}:{most_recent_tag}'
+
+    except Exception as e:
+        logger.warning(f'Failed to query Docker Hub for {repo_name}: {e}')
+        return f'{repo_name}:latest'  # Fallback to latest
+
+
 @dataclass
 class ExecutionResult:
     builder: Dict[str, Any]
@@ -721,7 +761,7 @@ def process_instance(
         metadata.details.get('max_budget_per_task', 1.0) if metadata.details else 1.0
     )
 
-    runtime_container_image = f'hwiwonlee/secb.x86_64.{instance_id}:latest'
+    runtime_container_image = get_latest_docker_tag(instance_id)
 
     logger.info(f'Processing instance: {instance_id} using run_controller')
     logger.info(f'Using runtime container image: {runtime_container_image}')
@@ -768,7 +808,8 @@ def process_instance(
             platform='linux/amd64',
             timeout=600,  # 10 minutes for overall reproduction
             user_id=0,
-            runtime_container_image=runtime_container_image,
+            base_container_image=runtime_container_image,  # Use base_container_image so OpenHands builds runtime layer
+            runtime_container_image=None,  # Let OpenHands build the runtime
             runtime_startup_env_vars={
                 'NO_CHANGE_TIMEOUT_SECONDS': '300'
             },  # Set to ensure that build commands are completed
@@ -1332,6 +1373,10 @@ async def complete_runtime(
             # Step 1: Start with a clean state and apply patches in sequence
             total_commands = []
             patch_cmd = f"""cd {instance['work_dir']} && git clean -fd && git reset --hard {base_commit_hash}"""
+
+            # Apply repo_changes.diff first if it exists (BuilderAgent's modifications)
+            if repo_changes:
+                patch_cmd += """ && git apply /testcase/repo_changes.diff"""
 
             # Then apply the model's vulnerability fix patch
             patch_cmd += """ && secb patch"""
