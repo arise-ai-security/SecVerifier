@@ -113,44 +113,64 @@ ENV_VARS_TO_COLLECT = [
 DELEGATION_SEQUENCE = ['BuilderAgent', 'ExploiterAgent', 'FixerAgent']
 
 
+def _docker_hub_image_exists(namespace: str, repo: str) -> bool:
+    """Check if a repository exists on Docker Hub."""
+    url = f'https://hub.docker.com/v2/repositories/{namespace}/{repo}/tags/latest'
+    try:
+        response = httpx.get(url, timeout=10)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+
 def get_latest_docker_tag(instance_id: str) -> str:
-    """Query Docker Hub for available tags and return the most recent one.
+    """Get the Docker image for an instance.
+
+    Priority:
+    1. Local secb.eval.x86_64.{instance_id}:latest
+    2. Docker Hub secb.eval.x86_64.{instance_id}
+    3. Docker Hub secb.x86_64.{instance_id} (legacy)
 
     Args:
         instance_id: The vulnerability instance ID (e.g., 'faad2.cve-2021-32273')
 
     Returns:
-        The full image name with the most recent tag
+        The full image name with tag
+
+    Raises:
+        RuntimeError: If no image found anywhere
     """
-    repo_name = f'hwiwonlee/secb.eval.x86_64.{instance_id}'
-    url = f'https://hub.docker.com/v2/repositories/{repo_name}/tags?page_size=100'
+    import docker as docker_lib
 
+    eval_image = f'hwiwonlee/secb.eval.x86_64.{instance_id}:latest'
+    legacy_image = f'hwiwonlee/secb.x86_64.{instance_id}:latest'
+
+    # 1. Check local
     try:
-        response = httpx.get(url, timeout=30)
-        if response.status_code == 404:
-            logger.warning(f'Repository {repo_name} not found on Docker Hub')
-            return f'{repo_name}:latest'  # Fallback to latest
-
-        response.raise_for_status()
-        data = response.json()
-
-        if 'results' not in data or len(data['results']) == 0:
-            logger.warning(f'No tags found for {repo_name}')
-            return f'{repo_name}:latest'
-
-        # Sort by last_updated and get the most recent
-        tags = sorted(
-            data['results'],
-            key=lambda x: x.get('last_updated', ''),
-            reverse=True
-        )
-        most_recent_tag = tags[0]['name']
-        logger.info(f'Found most recent tag for {instance_id}: {most_recent_tag}')
-        return f'{repo_name}:{most_recent_tag}'
-
+        client = docker_lib.from_env()
+        client.images.get(eval_image)
+        logger.info(f'Using local image: {eval_image}')
+        return eval_image
+    except docker_lib.errors.ImageNotFound:
+        pass
     except Exception as e:
-        logger.warning(f'Failed to query Docker Hub for {repo_name}: {e}')
-        return f'{repo_name}:latest'  # Fallback to latest
+        logger.debug(f'Docker client error: {e}')
+
+    # 2. Check Docker Hub for secb.eval.* image
+    if _docker_hub_image_exists('hwiwonlee', f'secb.eval.x86_64.{instance_id}'):
+        logger.info(f'Found on Docker Hub: {eval_image}')
+        return eval_image
+
+    # 3. Check Docker Hub for legacy secb.* image
+    if _docker_hub_image_exists('hwiwonlee', f'secb.x86_64.{instance_id}'):
+        logger.warning(f'Using legacy image (may have old secb format): {legacy_image}')
+        return legacy_image
+
+    # No image found anywhere
+    raise RuntimeError(
+        f'No Docker image found for {instance_id}. '
+        f'Build it locally with build_images.py first.'
+    )
 
 
 @dataclass
