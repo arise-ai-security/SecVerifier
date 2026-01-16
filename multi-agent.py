@@ -126,10 +126,12 @@ def _docker_hub_image_exists(namespace: str, repo: str) -> bool:
 def get_latest_docker_tag(instance_id: str) -> str:
     """Get the Docker image for an instance.
 
+    Uses INSTANCE images (secb.x86_64.*) which are built by SEC-bench preprocessor.
+    These images use the original OSS-Fuzz Dockerfiles with proper sanitizer support.
+
     Priority:
-    1. Local secb.eval.x86_64.{instance_id}:latest
-    2. Docker Hub secb.eval.x86_64.{instance_id}
-    3. Docker Hub secb.x86_64.{instance_id} (legacy)
+    1. Docker Hub INSTANCE image (hwiwonlee/secb.x86_64.{instance_id})
+    2. Local INSTANCE image (built via SEC-bench preprocessor)
 
     Args:
         instance_id: The vulnerability instance ID (e.g., 'faad2.cve-2021-32273')
@@ -142,34 +144,30 @@ def get_latest_docker_tag(instance_id: str) -> str:
     """
     import docker as docker_lib
 
-    eval_image = f'hwiwonlee/secb.eval.x86_64.{instance_id}:latest'
-    legacy_image = f'hwiwonlee/secb.x86_64.{instance_id}:latest'
+    instance_image = f'hwiwonlee/secb.x86_64.{instance_id}:latest'
 
-    # 1. Check local
+    # 1. Check Docker Hub for INSTANCE image
+    if _docker_hub_image_exists('hwiwonlee', f'secb.x86_64.{instance_id}'):
+        logger.info(f'Found INSTANCE image on Docker Hub: {instance_image}')
+        return instance_image
+
+    # 2. Check for local INSTANCE image (built via SEC-bench preprocessor)
     try:
         client = docker_lib.from_env()
-        client.images.get(eval_image)
-        logger.info(f'Using local image: {eval_image}')
-        return eval_image
+        client.images.get(instance_image)
+        logger.info(f'Using local INSTANCE image: {instance_image}')
+        return instance_image
     except docker_lib.errors.ImageNotFound:
         pass
     except Exception as e:
         logger.debug(f'Docker client error: {e}')
 
-    # 2. Check Docker Hub for secb.eval.* image
-    if _docker_hub_image_exists('hwiwonlee', f'secb.eval.x86_64.{instance_id}'):
-        logger.info(f'Found on Docker Hub: {eval_image}')
-        return eval_image
-
-    # 3. Check Docker Hub for legacy secb.* image
-    if _docker_hub_image_exists('hwiwonlee', f'secb.x86_64.{instance_id}'):
-        logger.warning(f'Using legacy image (may have old secb format): {legacy_image}')
-        return legacy_image
-
     # No image found anywhere
     raise RuntimeError(
         f'No Docker image found for {instance_id}. '
-        f'Build it locally with build_images.py first.'
+        f'Build it using SEC-bench preprocessor:\n'
+        f'  cd ~/data/github/SEC-bench && python -m secb.preprocessor.build_instance_images '
+        f'--input-file <instances.jsonl> --ids {instance_id}'
     )
 
 
